@@ -120,6 +120,7 @@ enum PermissionType {
   PERMISSION_AUDIO_STREAM = 11; // send/receive raw audio frames via FLAG_RAW_BINARY
   PERMISSION_KERNEL_ADMIN = 12; // admin KernelCommands (reload_config etc); health_check exempt
   PERMISSION_EVENT_PUBLISH = 13; // publish events to the kernel event bus
+  PERMISSION_STORAGE = 14; // per-caller KV/SQL storage (database plugin)
 }
 
 
@@ -134,6 +135,7 @@ message ActionRequest {
   bytes   params_json = 3;  // json payload with action params
   uint32  timeout_ms  = 4;  // response wait timeout in ms (0 = default 30s)
   bool    streaming   = 5;  // caller will follow with ActionRequestChunk frames (R6-02)
+  string  caller_plugin_id = 6;
 }
 
 message ActionResponse {
