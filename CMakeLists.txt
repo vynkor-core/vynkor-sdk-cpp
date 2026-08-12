@@ -57,7 +57,6 @@ target_link_libraries(veyron_sdk_cpp
     protobuf::libprotobuf
     absl::base
     absl::strings
-    absl::log_internal_check_op
     OpenSSL::Crypto
     ${ZSTD_TARGET}
     Threads::Threads
