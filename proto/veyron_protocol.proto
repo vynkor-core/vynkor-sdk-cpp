@@ -2,7 +2,8 @@ syntax = "proto3";
 
 package veyron;
 
-// v 1.4  (new PermissionType values 15-19: SECRETS, CLIPBOARD, LAUNCH, SCREEN, HOME)
+// v 1.5  (status enums renumbered: ACTION_UNKNOWN/COMMAND_UNKNOWN = 0 so a
+//         missed set_status() fails loudly instead of reading back as OK)
 
 // ═══════════════════════════════════════════
 // root envelope — every message goes through this
@@ -190,13 +191,14 @@ message SessionClose {
 }
 
 enum ActionStatus {
-  ACTION_OK                  = 0;
-  ACTION_ERROR               = 1;
-  ACTION_TIMEOUT             = 2;
-  ACTION_PERMISSION_DENY     = 3;  // plugin didn't declare the required permission
-  ACTION_NOT_FOUND           = 4;  // no such action in the kernel
-  ACTION_QUOTA_EXCEEDED      = 5;  // caller's per-provider rate/concurrency quota exceeded (R6-03)
-  ACTION_STREAM_BACKPRESSURE = 6;  // R6-02
+  ACTION_UNKNOWN             = 0;  // proto3 default; a missed set_status() shows up as this, not OK (M9)
+  ACTION_OK                  = 1;
+  ACTION_ERROR               = 2;
+  ACTION_TIMEOUT             = 3;
+  ACTION_PERMISSION_DENY     = 4;  // plugin didn't declare the required permission
+  ACTION_NOT_FOUND           = 5;  // no such action in the kernel
+  ACTION_QUOTA_EXCEEDED      = 6;  // caller's per-provider rate/concurrency quota exceeded (R6-03)
+  ACTION_STREAM_BACKPRESSURE = 7;  // R6-02
 }
 
 
@@ -219,9 +221,9 @@ message KernelCommandAck {
 }
 
 enum CommandStatus {
-  COMMAND_OK                 = 0;
-  COMMAND_ERROR              = 1;
-  COMMAND_UNKNOWN            = 2;  // plugin doesn't know this command
+  COMMAND_UNKNOWN            = 0;  // plugin doesn't know this command; also the proto3 default (M9)
+  COMMAND_OK                 = 1;
+  COMMAND_ERROR              = 2;
   COMMAND_PERMISSION_DENIED  = 3;  // plugin didn't declare PERMISSION_KERNEL_ADMIN
 }
 
