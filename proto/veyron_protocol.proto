@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package veyron;
 
-// v 1.3  (R6: streaming actions, event publish, per-caller storage, caller_plugin_id)
+// v 1.4  (new PermissionType values 15-19: SECRETS, CLIPBOARD, LAUNCH, SCREEN, HOME)
 
 // ═══════════════════════════════════════════
 // root envelope — every message goes through this
@@ -121,6 +121,11 @@ enum PermissionType {
   PERMISSION_KERNEL_ADMIN = 12; // admin KernelCommands (reload_config etc); health_check exempt
   PERMISSION_EVENT_PUBLISH = 13; // publish events to the kernel event bus
   PERMISSION_STORAGE = 14; // per-caller KV/SQL storage (database plugin)
+  PERMISSION_SECRETS   = 15; // encrypted credential/API-key vault (secrets plugin)
+  PERMISSION_CLIPBOARD = 16; // read/write system clipboard (clipboard plugin)
+  PERMISSION_LAUNCH    = 17; // launch apps/games by name (launcher plugin)
+  PERMISSION_SCREEN    = 18; // capture screen/window (screenshot plugin)
+  PERMISSION_HOME      = 19; // home automation, custom protocol to bare-metal devices (home plugin)
 }
 
 

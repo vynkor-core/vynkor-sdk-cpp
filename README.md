@@ -10,9 +10,9 @@ HMAC-SHA256 frame authentication, and fragmentation.
 ## Protocol source
 
 `proto/veyron_protocol.proto` is vendored from
-[`veyron-wire`](https://crates.io/crates/veyron-wire)'s `wire/proto/`. It's
-copied by hand, not path-referenced — re-sync it when the protocol changes
-upstream.
+[`veyron-wire`](https://crates.io/crates/veyron-wire)'s `proto/` (wire
+protocol **v1.4** as of the latest sync). It's copied by hand, not
+path-referenced — re-sync it when the protocol changes upstream.
 
 ## Requirements
 
