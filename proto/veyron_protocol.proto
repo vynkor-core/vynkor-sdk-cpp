@@ -2,6 +2,10 @@ syntax = "proto3";
 
 package veyron;
 
+// v 1.6  (D-01: device identity + versioning + user_id + tool schema —
+//         PluginRegister gains device/os/version/capabilities/protocol_version/
+//         user_id; PluginManifest gains platforms[]/action_specs[]; new
+//         DeviceInfo/DeviceOs/DeviceState/ActionSpec/ActionRisk. All additive.)
 // v 1.5  (status enums renumbered: ACTION_UNKNOWN/COMMAND_UNKNOWN = 0 so a
 //         missed set_status() fails loudly instead of reading back as OK)
 
@@ -71,6 +75,17 @@ message PluginRegister {
   string          description  = 3;
   PluginManifest  manifest     = 4;
   string          jwt_token    = 5;  // auth token (required when kernel has jwt_secret configured)
+
+  // D-01 (v1.6): device identity + protocol versioning + user_id. All fields
+  // are additive; the kernel stores/passes them, never interprets (dumb core).
+  string          device_id        = 6;   // owning device; "local" for host plugins (D-02)
+  DeviceOs        os               = 7;   // OS family of the device
+  string          arch             = 8;   // e.g. "x86_64", "aarch64"
+  string          os_version       = 9;   // e.g. "24.04", "16"
+  repeated string capabilities     = 10;  // feature negotiation; stored/passed verbatim
+  string          protocol_version = 11;  // wire protocol version (semver, e.g. "1.6");
+                                          // kernel rejects on major mismatch (D-03)
+  string          user_id          = 12;  // owning user; "default" for single-user (D-02)
 }
 
 message PluginRegisterAck {
@@ -82,6 +97,40 @@ message PluginRegisterAck {
 
 message PluginShutdown {
   string  reason        = 1;    uint32  grace_seconds = 2;
+}
+
+
+// ═══════════════════════════════════════════
+// device identity & discovery (D-01, v1.6)
+// ═══════════════════════════════════════════
+
+enum DeviceOs {
+  DEVICE_OS_UNSPECIFIED = 0;  // proto3 default; a missed set_os() reads back as this
+  DEVICE_OS_LINUX       = 1;
+  DEVICE_OS_MACOS       = 2;
+  DEVICE_OS_WINDOWS     = 3;
+  DEVICE_OS_ANDROID     = 4;
+  DEVICE_OS_IOS         = 5;
+  DEVICE_OS_FREEBSD     = 6;
+}
+
+enum DeviceState {
+  DEVICE_STATE_UNSPECIFIED = 0;
+  DEVICE_STATE_ONLINE      = 1;
+  DEVICE_STATE_OFFLINE     = 2;
+}
+
+// Registry/discovery record — the kernel stores one per device_id (D-02) and
+// serves it via list_devices / GET /devices (D-04). Kernel stores/passes
+// device metadata, never interprets it.
+message DeviceInfo {
+  string          device_id    = 1;
+  DeviceOs        os           = 2;
+  string          arch         = 3;
+  string          os_version   = 4;
+  repeated string capabilities = 5;
+  uint64          last_seen    = 6;  // unix millis of the last ping/pong
+  DeviceState     state        = 7;
 }
 
 
@@ -103,6 +152,30 @@ message PluginManifest {
   // "dumb byte router" kernel per the manifesto.
   reserved 4, 5, 6;
   reserved "needs_ai", "needs_gpu", "priority";
+
+  // D-01 (v1.6): install filtering + structured tool schema. Both additive;
+  // the kernel stores/serves them, never interprets (dumb core).
+  repeated string  platforms    = 8;  // install filtering, e.g. "android-14+", "macos", "linux"
+  repeated ActionSpec action_specs = 9;  // tool schema for the AI (D-08); name must match actions[]
+}
+
+// D-01 (v1.6): structured tool spec for AI plugins — data only, served from
+// the registry (D-08); the kernel does not parse params_schema. name must
+// match an entry in actions[] so the router stays on the string allowlist.
+message ActionSpec {
+  string  name                  = 1;
+  string  description           = 2;  // for the AI; trusted manifest data
+  string  params_schema         = 3;  // JSON Schema of params_json
+  ActionRisk  risk              = 4;
+  bool    requires_confirmation = 5;  // high-risk: user approval gate (D-09)
+}
+
+enum ActionRisk {
+  ACTION_RISK_UNKNOWN  = 0;  // proto3 default
+  ACTION_RISK_LOW      = 1;
+  ACTION_RISK_MEDIUM   = 2;
+  ACTION_RISK_HIGH     = 3;
+  ACTION_RISK_CRITICAL = 4;
 }
 
 enum PermissionType {
