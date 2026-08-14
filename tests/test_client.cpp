@@ -8,7 +8,7 @@ using namespace veyron;
 TEST(VeyronClientConnect, RejectsOverlongSocketPath) {
     std::string too_long(sizeof(sockaddr_un{}.sun_path), 'x');
     VeyronClient client(too_long);
-    EXPECT_THROW(client.connect(), std::runtime_error);
+    EXPECT_THROW(client.connect(), VeyronIoError);
 }
 
 TEST(VeyronClientConnect, AcceptsPathAtMaxLength) {
@@ -20,7 +20,7 @@ TEST(VeyronClientConnect, AcceptsPathAtMaxLength) {
     try {
         client.connect();
         FAIL() << "expected connect() to throw (no listener at synthetic path)";
-    } catch (const std::runtime_error& e) {
+    } catch (const VeyronIoError& e) {
         EXPECT_EQ(std::string(e.what()).find("too long"), std::string::npos);
     }
 }

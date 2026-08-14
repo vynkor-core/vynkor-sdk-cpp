@@ -79,7 +79,7 @@ TEST(SendAction, StreamAbortForActionIdRaises) {
     });
 
     std::vector<uint8_t> params{'{', '}'};
-    EXPECT_THROW(client.send_action("get_weather", params, 1000), std::runtime_error);
+    EXPECT_THROW(client.send_action("get_weather", params, 1000), VeyronInternal);
     kernel.join();
 }
 
@@ -97,7 +97,7 @@ TEST(SendAction, KernelErrorEnvelopeRaises) {
     });
 
     std::vector<uint8_t> params{'{', '}'};
-    EXPECT_THROW(client.send_action("get_weather", params, 1000), std::runtime_error);
+    EXPECT_THROW(client.send_action("get_weather", params, 1000), VeyronInternal);
     kernel.join();
 }
 
@@ -112,7 +112,7 @@ TEST(SendAction, TimesOutWhenNoResponse) {
 
     std::vector<uint8_t> params{'{', '}'};
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(client.send_action("get_weather", params, 150), std::runtime_error);
+    EXPECT_THROW(client.send_action("get_weather", params, 150), VeyronTimeout);
     const auto elapsed = std::chrono::steady_clock::now() - start;
     EXPECT_LT(elapsed, std::chrono::seconds(2));
 

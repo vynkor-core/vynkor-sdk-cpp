@@ -97,7 +97,7 @@ TEST(PublishEvent, KernelErrorEnvelopeRaises) {
     });
 
     std::vector<uint8_t> payload{'{', '}'};
-    EXPECT_THROW(client.publish_event("my.event", payload, 1000), std::runtime_error);
+    EXPECT_THROW(client.publish_event("my.event", payload, 1000), VeyronInternal);
     kernel.join();
 }
 
@@ -113,7 +113,7 @@ TEST(PublishEvent, TimesOutWhenNoResponse) {
 
     std::vector<uint8_t> payload{'{', '}'};
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(client.publish_event("my.event", payload, 150), std::runtime_error);
+    EXPECT_THROW(client.publish_event("my.event", payload, 150), VeyronTimeout);
     const auto elapsed = std::chrono::steady_clock::now() - start;
     EXPECT_LT(elapsed, std::chrono::seconds(2));
 

@@ -24,11 +24,20 @@ namespace {
 
 class RecordingPlugin : public Plugin {
 public:
-    using Plugin::Plugin;
+    const std::string& id() const override { return id_; }
     std::vector<Envelope> seen;
     std::vector<Event> events_seen;
-    void on_message(const Envelope& env) override { seen.push_back(env); }
-    void on_event(const Event& event) override { events_seen.push_back(event); }
+    std::optional<Envelope> on_message(const Envelope& env) override {
+        seen.push_back(env);
+        return std::nullopt;
+    }
+    std::optional<Envelope> on_event(const Event& event) override {
+        events_seen.push_back(event);
+        return std::nullopt;
+    }
+
+private:
+    std::string id_ = "test-plugin";
 };
 
 void write_all(int fd, const std::vector<uint8_t>& bytes) {
@@ -99,8 +108,8 @@ TEST(PluginRunLoop, AnswersWatchdogPingWithPong) {
         ::close(fd);
     });
 
-    RecordingPlugin plugin("test-plugin", sock_path);
-    plugin.run();
+    RecordingPlugin plugin;
+    plugin.run_with(sock_path);
     fake_kernel.join();
     ::close(listen_fd);
     ::unlink(sock_path.c_str());
@@ -155,8 +164,8 @@ TEST(PluginRunLoop, DispatchesEventToOnEventAndSendsAck) {
         ::close(fd);
     });
 
-    RecordingPlugin plugin("test-plugin", sock_path);
-    plugin.run();
+    RecordingPlugin plugin;
+    plugin.run_with(sock_path);
     fake_kernel.join();
     ::close(listen_fd);
     ::unlink(sock_path.c_str());

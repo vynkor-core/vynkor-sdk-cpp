@@ -73,7 +73,7 @@ TEST(Fragmentation, SendFragmentedRejectsOversizedPayload) {
     ::close(b);
 
     std::vector<uint8_t> payload(MAX_PAYLOAD_SIZE + 1, 0);
-    EXPECT_THROW(sender.send_fragmented("peer", payload, 65536), std::runtime_error);
+    EXPECT_THROW(sender.send_fragmented("peer", payload, 65536), VeyronPayloadTooLarge);
 }
 
 TEST(Fragmentation, RejectsFragmentTotalMismatchWithinStream) {
@@ -92,7 +92,7 @@ TEST(Fragmentation, RejectsFragmentTotalMismatchWithinStream) {
     auto frame2 = pack_frame("peer", frag2, FLAG_FRAGMENTED);
     ASSERT_EQ(::write(a, frame2.data(), frame2.size()), static_cast<ssize_t>(frame2.size()));
 
-    EXPECT_THROW(receiver.recv(), std::runtime_error);
+    EXPECT_THROW(receiver.recv(), VeyronInternal);
 }
 
 TEST(Fragmentation, TooManyConcurrentStreamsRejected) {
@@ -112,5 +112,5 @@ TEST(Fragmentation, TooManyConcurrentStreamsRejected) {
     ASSERT_EQ(::write(a, overflow_frame.data(), overflow_frame.size()),
              static_cast<ssize_t>(overflow_frame.size()));
 
-    EXPECT_THROW(receiver.recv(), std::runtime_error);
+    EXPECT_THROW(receiver.recv(), VeyronInternal);
 }

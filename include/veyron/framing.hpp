@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "veyron/error.hpp"
 #include "veyron/mac.hpp"
 
 namespace veyron {
@@ -70,6 +71,23 @@ std::vector<uint8_t> pack_frame_mac(const std::string& target,
                                     const std::array<uint8_t, 32>& session_key,
                                     uint16_t extra_flags = 0);
 
+// Build a wire frame with outbound zstd compression and frame MAC, mirroring
+// veyron-wire's write_frame_raw ordering exactly:
+//   1. payload >= COMPRESS_THRESHOLD (and neither FLAG_COMPRESSED nor
+//      FLAG_RAW_BINARY set) is zstd-compressed at level 3, used only if it
+//      actually shrinks the bytes (else the original is sent uncompressed);
+//   2. the MAC (when session_key != nullptr) is computed over the *plaintext*
+//      header + payload — i.e. BEFORE compression — keyed on the pre-compression
+//      header (flags as passed, plaintext length, plaintext crc32);
+//   3. the wire header describes the compressed bytes (FLAG_COMPRESSED set,
+//      compressed length, crc32 over compressed bytes).
+// `flags` must already include FLAG_MAC_PRESENT when session_key is set.
+// session_key == nullptr sends CRC-only (no MAC tag appended).
+std::vector<uint8_t> pack_frame_raw(const std::string& target,
+                                    uint16_t flags,
+                                    const std::vector<uint8_t>& payload,
+                                    const std::array<uint8_t, 32>* session_key);
+
 // Result of read_frame_full.
 struct FrameResult {
     std::vector<uint8_t>                    payload;
@@ -92,13 +110,13 @@ static constexpr int FRAME_READ_TIMEOUT_MS = 10000;
 // (bounded to MAX_PAYLOAD_SIZE) and `flags`/`raw_header` describe the
 // decompressed bytes, matching the kernel's read-side normalization.
 // If session_key is non-null and FLAG_MAC_PRESENT is set, verifies the MAC tag;
-// throws std::runtime_error("veyron: MAC verification failed") on mismatch.
-// If session_key is null, MAC bytes are read and stored but not verified.
+// throws VeyronInternal on mismatch. If session_key is null, MAC bytes are read
+// and stored but not verified.
 //
 // Blocks indefinitely waiting for the first byte of the next frame (an idle
 // connection must not be torn down); once a byte arrives, the remainder of
 // the frame must complete within frame_timeout_ms or this throws
-// std::runtime_error("veyron: frame read timed out").
+// VeyronFrameReadTimeout.
 FrameResult read_frame_full_with_timeout(int fd,
                                          const std::array<uint8_t, 32>* session_key,
                                          int frame_timeout_ms);
@@ -107,8 +125,7 @@ FrameResult read_frame_full_with_timeout(int fd,
 // of the frame too (via poll()), not just mid-frame completion. Used by
 // request/response client methods (publish_event, and future streaming/
 // session methods) that need a caller-supplied overall deadline.
-// Throws std::runtime_error("veyron: timed out") if deadline passes before
-// a frame arrives or completes.
+// Throws VeyronTimeout if the deadline passes before a frame arrives.
 FrameResult read_frame_full_with_deadline(int fd,
                                           const std::array<uint8_t, 32>* session_key,
                                           std::chrono::steady_clock::time_point deadline);

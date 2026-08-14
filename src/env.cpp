@@ -13,6 +13,15 @@ bool is_directory(const std::string& path) {
     struct stat st{};
     return ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
+
+// Creates ~/.veyron/run with mode 0700 (mirrors veyron-wire's
+// default_private_dir). Returns true on success or if it already exists.
+bool ensure_private_dir(const std::string& dir) {
+    if (::mkdir(dir.c_str(), 0700) != 0 && errno != EEXIST)
+        return false;
+    // chmod regardless — a pre-existing dir may predate the 0700 guarantee.
+    return ::chmod(dir.c_str(), 0700) == 0;
+}
 } // namespace
 
 std::string default_socket_path() {
@@ -27,7 +36,12 @@ std::string default_socket_path() {
         return run_user + "/veyron.sock";
     }
     const char* home = std::getenv("HOME");
-    return std::string(home ? home : "") + "/.veyron/run/veyron.sock";
+    if (home && *home) {
+        const std::string dir = std::string(home) + "/.veyron/run";
+        if (ensure_private_dir(dir))
+            return dir + "/veyron.sock";
+    }
+    return "";
 }
 
 std::string resolve_jwt_token(const std::string& explicit_token) {

@@ -7,20 +7,33 @@ using namespace veyron;
 namespace {
 class NoopPlugin : public Plugin {
 public:
-    using Plugin::Plugin;
-    void on_message(const Envelope&) override {}
+    const std::string& id() const override { return id_; }
+    std::optional<Envelope> on_message(const Envelope&) override { return std::nullopt; }
+
+    std::string id_ = "test-plugin";
 };
 } // namespace
 
-TEST(PluginConstruction, PicksUpJwtTokenFromEnv) {
-    setenv("VEYRON_JWT_TOKEN", "tok-from-env", 1);
-    NoopPlugin plugin("test-plugin");
-    EXPECT_EQ(plugin.jwt_token(), "tok-from-env");
-    unsetenv("VEYRON_JWT_TOKEN");
+TEST(PluginDefaults, VersionDefaultsTo100) {
+    NoopPlugin plugin;
+    EXPECT_EQ(plugin.version(), "1.0.0");
 }
 
-TEST(PluginConstruction, NeverDefaultsSocketToSharedTmp) {
+TEST(PluginDefaults, ManifestDefaultsToEmpty) {
+    NoopPlugin plugin;
+    PluginManifest m = plugin.manifest();
+    EXPECT_EQ(m.permissions_size(), 0);
+    EXPECT_EQ(m.actions_size(), 0);
+    EXPECT_EQ(m.events_size(), 0);
+    EXPECT_EQ(m.ipc_targets_size(), 0);
+}
+
+TEST(PluginDefaults, IdComesFromOverride) {
+    NoopPlugin plugin;
+    EXPECT_EQ(plugin.id(), "test-plugin");
+}
+
+TEST(PluginDefaults, NeverDefaultsSocketToSharedTmp) {
     unsetenv("XDG_RUNTIME_DIR");
-    NoopPlugin plugin("test-plugin");
-    EXPECT_NE(plugin.socket_path(), "/tmp/veyron.sock");
+    EXPECT_NE(default_socket_path(), "/tmp/veyron.sock");
 }

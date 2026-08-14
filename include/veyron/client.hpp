@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "veyron/error.hpp"
 #include "veyron/framing.hpp"
 #include "veyron/mac.hpp"
 #include "veyron_protocol.pb.h"
@@ -19,6 +20,9 @@ namespace veyron {
 // and the rust/python SDKs' client-side reassembly (T-18).
 static constexpr size_t MAX_REASSEMBLY_STREAMS = 64;
 static constexpr std::chrono::seconds REASSEMBLY_TIMEOUT{30};
+
+// Request timeout when a caller passes timeout_ms == 0 (kernel default, 30 s).
+static constexpr std::chrono::milliseconds DEFAULT_REQUEST_TIMEOUT{30000};
 
 class VeyronClient {
 public:
@@ -31,55 +35,95 @@ public:
     explicit VeyronClient(int fd, std::vector<uint8_t> secret = {});
     ~VeyronClient();
 
-    void    connect();
-    void    close();
+    // Move-only: owns the fd. The moved-from client no longer closes it.
+    VeyronClient(VeyronClient&& other) noexcept;
+    VeyronClient& operator=(VeyronClient&& other) noexcept;
+    VeyronClient(const VeyronClient&) = delete;
+    VeyronClient& operator=(const VeyronClient&) = delete;
 
-    // Send PluginRegister, return the RegisterAck envelope.
-    // Derives session_key_ from ack.session_nonce when secret is set.
-    Envelope register_plugin(const std::string& plugin_id,
-                             const std::string& jwt_token = "");
+    // Static factories returning a connected client (Rust parity: VeyronClient::connect /
+    // connect_with_secret / connect_from_env).
+    static VeyronClient connect(const std::string& socket_path);
+    static VeyronClient connect_with_secret(const std::string& socket_path,
+                                            const std::vector<uint8_t>& secret);
+    // Uses VEYRON_SOCKET_PATH (or the per-user default) and VEYRON_JWT_SECRET
+    // (enables frame MACs when set).
+    static VeyronClient connect_from_env();
 
-    // Same, declaring a manifest (permissions/actions/events/ipc_targets) —
-    // required for IPC send permission and kernel-brokered action routing
-    // (PluginManifest.actions), neither of which work with an empty manifest.
-    Envelope register_plugin(const std::string& plugin_id,
-                             const PluginManifest& manifest,
-                             const std::string& jwt_token = "");
+    // Member connect (the ctor(socket_path, secret) + connect() pattern).
+    void connect();
+    void close();
 
-    void    send(const std::string& target, const Envelope& env);
-    Envelope recv();
+    // True once a secured registration has derived the per-connection MAC key.
+    bool is_secured() const { return session_key_.has_value(); }
+
+    // ── Registration ─────────────────────────────────────────────────
+    // Rust's `register` is a reserved C++ keyword, so the tokenless overload
+    // keeps the `register_plugin` name. All three return the typed ack (Rust
+    // parity — no raw Envelope).
+
+    // Register without a JWT (unsecured kernel only). version "1.0.0".
+    PluginRegisterAck register_plugin(const std::string& plugin_id,
+                                      const PluginManifest& manifest);
+    // Register presenting a JWT. On a secured kernel the ack carries a
+    // session_nonce; combined with the shared secret and plugin id it yields
+    // the frame-MAC key for all subsequent frames.
+    PluginRegisterAck register_with_token(const std::string& plugin_id,
+                                          const PluginManifest& manifest,
+                                          const std::string& jwt_token);
+    // Register with an explicit plugin version string.
+    PluginRegisterAck register_full(const std::string& plugin_id,
+                                    const std::string& version,
+                                    const PluginManifest& manifest,
+                                    const std::string& jwt_token);
+
+    // ── Sending ──────────────────────────────────────────────────────
+    void send(const std::string& target, const Envelope& env);
+    void send_raw(const std::string& target, const std::vector<uint8_t>& payload);
+    // Send a raw payload with explicit extra flags ORed into the frame header
+    // (e.g. FLAG_RAW_BINARY). MAC and outbound compression are applied
+    // automatically by the framing layer.
+    void send_raw_with_flags(const std::string& target,
+                             uint16_t extra_flags,
+                             const std::vector<uint8_t>& payload);
 
     // Split `payload` into FLAG_FRAGMENTED frames of at most `chunk_size` data
     // bytes each and send them on a fresh stream id. The receiving side (kernel
     // or another VeyronClient) reassembles them into one logical frame. Bounds
     // mirror the kernel: total payload <= 1 MiB, <= 65535 fragments.
     void send_fragmented(const std::string& target,
-                        const std::vector<uint8_t>& payload,
-                        size_t chunk_size);
+                         const std::vector<uint8_t>& payload,
+                         size_t chunk_size);
 
+    // ── Receiving ────────────────────────────────────────────────────
     // Receive the next complete frame, transparently reassembling
     // FLAG_FRAGMENTED frames. Mirrors the rust/python SDKs' recv_frame.
     FrameResult recv_frame();
+    // Receive and decode the next Envelope. Errors on raw-binary frames.
+    Envelope recv();
+    // recv() bounded by `timeout`; throws VeyronTimeout if nothing arrives.
+    Envelope recv_timeout(std::chrono::milliseconds timeout);
 
-    void   subscribe(const std::vector<std::string>& event_types);
+    // ── Events ───────────────────────────────────────────────────────
+    void subscribe(const std::vector<std::string>& event_types);
+    void unsubscribe(const std::vector<std::string>& event_types);
     // Confirms an Event was received and handled — kernel stops retrying it.
-    // An un-acked event is redelivered up to max_retries then dropped (T-06).
-    void   ack_event(const std::string& event_id);
-    double ping();
+    void ack_event(const std::string& event_id);
 
+    // ── Kernel requests ──────────────────────────────────────────────
     // Publish an event to the kernel event bus. Requires PERMISSION_EVENT_PUBLISH.
-    // timeout_ms == 0 uses the kernel default of 30s. Throws std::runtime_error
-    // on a kernel Error envelope or on timeout. The returned EventPublishAck is
-    // returned as-is regardless of its status field (OK/ERROR/PERMISSION_DENY) —
-    // callers inspect ack.status() themselves, mirroring the Rust SDK.
+    // timeout_ms == 0 uses the kernel default of 30s. The returned EventPublishAck
+    // is returned as-is regardless of its status field — callers inspect
+    // ack.status() themselves. Throws VeyronInternal on a kernel Error envelope,
+    // VeyronTimeout on timeout.
     EventPublishAck publish_event(const std::string& event_type,
                                   const std::vector<uint8_t>& payload_json,
                                   uint32_t timeout_ms = 0);
 
     // Ask the kernel to perform an action and await its ActionResponse.
-    // timeout_ms == 0 uses the kernel default of 30s. Throws std::runtime_error
-    // on a kernel Error envelope, on an ActionStreamAbort for this action_id,
-    // or on timeout.
+    // timeout_ms == 0 uses the kernel default of 30s. Throws VeyronInternal on a
+    // kernel Error envelope or ActionStreamAbort for this action_id, VeyronTimeout
+    // on timeout.
     ActionResponse send_action(const std::string& action,
                                const std::vector<uint8_t>& params_json,
                                uint32_t timeout_ms = 0);
@@ -98,10 +142,26 @@ public:
     // Fire-and-forget: tell the peer this action's session is done.
     void close_session(const std::string& action_id, const std::string& reason);
 
+    // Send a KernelCommand and await its ack.
+    KernelCommandAck send_command(const std::string& command_id,
+                                  const std::string& command,
+                                  const std::vector<uint8_t>& params_json);
+
+    // Round-trip a Ping to the kernel; returns measured latency (Rust Duration
+    // semantics — a duration, not a raw double).
+    std::chrono::duration<double, std::milli> ping();
+
+    // ── Audio ────────────────────────────────────────────────────────
+    // Send an AudioStreamChunk (stream negotiation / Opus-over-envelope) to a
+    // peer plugin. Requires PERMISSION_AUDIO_STREAM.
+    void send_audio_chunk(const std::string& target, const AudioStreamChunk& chunk);
+    // Send raw audio bytes (PCM_S16LE or Opus) with FLAG_RAW_BINARY; the router
+    // skips Protobuf decode. Raw-binary payloads are never compressed.
+    void send_raw_audio(const std::string& target, const std::vector<uint8_t>& data);
+
 private:
     std::string                            socket_path_;
     int                                    fd_ = -1;
-    std::string                            plugin_id_;
     std::vector<uint8_t>                   secret_;
     std::optional<std::array<uint8_t,32>>  session_key_;
 
@@ -137,11 +197,6 @@ private:
     std::optional<FrameResult> absorb_fragment(FrameResult frame);
 
     void write_all(const std::vector<uint8_t>& frame);
-
-    // Send without MAC regardless of session_key_ (used for registration handshake).
-    void send_envelope_no_mac(const std::string& target, const Envelope& env);
-    // Send with MAC when session_key_ is set, else CRC-only.
-    void send_envelope(const std::string& target, const Envelope& env);
 
     // Like recv_frame(), but bounds the total wait (including the first byte)
     // by deadline instead of the per-frame idle-forever default.

@@ -10,9 +10,11 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
-#include <stdexcept>
+#include <optional>
 #include <string>
 #include <vector>
+
+#include "veyron/error.hpp"
 
 namespace veyron {
 
@@ -79,7 +81,7 @@ std::vector<uint8_t> pack_frame(const std::string& target,
                                 const std::vector<uint8_t>& payload,
                                 uint16_t extra_flags) {
     if (payload.size() > MAX_PAYLOAD_SIZE)
-        throw std::runtime_error("veyron: payload exceeds 1 MiB limit");
+        throw VeyronPayloadTooLarge(payload.size());
 
     uint32_t crc = veyron_crc32(payload.data(), payload.size());
 
@@ -116,7 +118,7 @@ std::vector<uint8_t> pack_frame_mac(const std::string& target,
                                     const std::array<uint8_t, 32>& session_key,
                                     uint16_t extra_flags) {
     if (payload.size() > MAX_PAYLOAD_SIZE)
-        throw std::runtime_error("veyron: payload exceeds 1 MiB limit");
+        throw VeyronPayloadTooLarge(payload.size());
 
     uint32_t crc = veyron_crc32(payload.data(), payload.size());
 
@@ -154,7 +156,7 @@ static void recv_exact(int fd, uint8_t* buf, size_t n) {
         if (r < 0 && errno == EINTR)
             continue;
         if (r <= 0)
-            throw std::runtime_error("veyron: connection closed or recv error");
+            throw VeyronIoError("connection closed or recv error");
         total += static_cast<size_t>(r);
     }
 }
@@ -166,7 +168,7 @@ static void recv_exact_deadline(int fd, uint8_t* buf, size_t n, Deadline deadlin
     while (total < n) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline)
-            throw std::runtime_error("veyron: frame read timed out");
+            throw VeyronFrameReadTimeout();
         const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
 
         struct pollfd pfd {};
@@ -176,16 +178,16 @@ static void recv_exact_deadline(int fd, uint8_t* buf, size_t n, Deadline deadlin
         if (pr < 0) {
             if (errno == EINTR)
                 continue;
-            throw std::runtime_error("veyron: poll failed during frame read");
+            throw VeyronIoError("poll failed during frame read");
         }
         if (pr == 0)
-            throw std::runtime_error("veyron: frame read timed out");
+            throw VeyronFrameReadTimeout();
 
         const ssize_t r = ::read(fd, buf + total, n - total);
         if (r < 0 && errno == EINTR)
             continue;
         if (r <= 0)
-            throw std::runtime_error("veyron: connection closed or recv error");
+            throw VeyronIoError("connection closed or recv error");
         total += static_cast<size_t>(r);
     }
 }
@@ -194,14 +196,14 @@ static void recv_exact_deadline(int fd, uint8_t* buf, size_t n, Deadline deadlin
 static std::vector<uint8_t> zstd_decompress_bounded(const uint8_t* data, size_t len) {
     unsigned long long content_size = ZSTD_getFrameContentSize(data, len);
     if (content_size == ZSTD_CONTENTSIZE_ERROR)
-        throw std::runtime_error("veyron: decompress frame: invalid zstd frame");
+        throw VeyronInternal("decompress frame: invalid zstd frame");
     if (content_size == ZSTD_CONTENTSIZE_UNKNOWN || content_size > MAX_PAYLOAD_SIZE)
-        throw std::runtime_error("veyron: decompress frame: content size unknown or too large");
+        throw VeyronInternal("decompress frame: content size unknown or too large");
 
     std::vector<uint8_t> out(static_cast<size_t>(content_size));
     size_t result = ZSTD_decompress(out.data(), out.size(), data, len);
     if (ZSTD_isError(result) || result != out.size())
-        throw std::runtime_error(std::string("veyron: decompress frame: ") + ZSTD_getErrorName(result));
+        throw VeyronInternal(std::string("decompress frame: ") + ZSTD_getErrorName(result));
     return out;
 }
 
@@ -221,6 +223,70 @@ static void build_header(uint8_t out[FRAME_HEADER_SIZE], uint16_t flags,
     std::memcpy(out + 40, &crc_be, 4);
 }
 
+static void target_to_bytes(const std::string& target, uint8_t out[32]) {
+    std::memset(out, 0, 32);
+    const size_t copy_len = std::min(target.size(), size_t{32});
+    if (copy_len > 0)
+        std::memcpy(out, target.data(), copy_len);
+}
+
+static std::vector<uint8_t> zstd_compress_level3(const uint8_t* data, size_t len) {
+    std::vector<uint8_t> compressed(ZSTD_compressBound(len));
+    size_t csize = ZSTD_compress(compressed.data(), compressed.size(), data, len, 3);
+    if (ZSTD_isError(csize))
+        throw VeyronInternal(std::string("zstd compress failed: ") + ZSTD_getErrorName(csize));
+    compressed.resize(csize);
+    return compressed;
+}
+
+std::vector<uint8_t> pack_frame_raw(const std::string& target,
+                                    uint16_t flags,
+                                    const std::vector<uint8_t>& payload,
+                                    const std::array<uint8_t, 32>* session_key) {
+    if (payload.size() > MAX_PAYLOAD_SIZE)
+        throw VeyronPayloadTooLarge(payload.size());
+
+    uint8_t target_bytes[32];
+    target_to_bytes(target, target_bytes);
+
+    // Plaintext header: MAC (when secured) covers these bytes — computed BEFORE
+    // compression, so it must describe the uncompressed payload (flags as
+    // passed, plaintext length, plaintext crc32). Mirrors write_frame_raw.
+    std::array<uint8_t, FRAME_HEADER_SIZE> plain_header;
+    build_header(plain_header.data(), flags, target_bytes, payload);
+
+    std::optional<std::array<uint8_t, 32>> tag;
+    if (session_key != nullptr)
+        tag = compute_tag(*session_key, plain_header.data(), FRAME_HEADER_SIZE,
+                          payload.data(), payload.size());
+
+    // Outbound compression (write_frame_raw semantics): candidates >= threshold,
+    // skip raw binary, keep only if it shrinks the bytes.
+    const std::vector<uint8_t>* wire_payload = &payload;
+    uint16_t wire_flags = flags;
+    std::vector<uint8_t> compressed;
+    if (payload.size() >= COMPRESS_THRESHOLD &&
+        !(flags & FLAG_COMPRESSED) && !(flags & FLAG_RAW_BINARY)) {
+        compressed = zstd_compress_level3(payload.data(), payload.size());
+        if (compressed.size() < payload.size()) {
+            wire_payload = &compressed;
+            wire_flags = flags | FLAG_COMPRESSED;
+        }
+    }
+
+    // Wire header describes the bytes actually on the wire (possibly compressed).
+    uint8_t wire_header[FRAME_HEADER_SIZE];
+    build_header(wire_header, wire_flags, target_bytes, *wire_payload);
+
+    std::vector<uint8_t> frame;
+    frame.reserve(FRAME_HEADER_SIZE + wire_payload->size() + (tag ? MAC_TAG_LEN : 0));
+    frame.insert(frame.end(), wire_header, wire_header + FRAME_HEADER_SIZE);
+    frame.insert(frame.end(), wire_payload->begin(), wire_payload->end());
+    if (tag)
+        frame.insert(frame.end(), tag->begin(), tag->end());
+    return frame;
+}
+
 // ---------------------------------------------------------------------------
 // read_frame_full_with_deadline — bounds the wait for the first byte too,
 // via poll(), then hands off to read_frame_full_with_timeout for the rest.
@@ -230,7 +296,7 @@ FrameResult read_frame_full_with_deadline(int fd, const std::array<uint8_t, 32>*
     while (true) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline)
-            throw std::runtime_error("veyron: timed out");
+            throw VeyronTimeout();
         const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
 
         struct pollfd pfd {};
@@ -240,10 +306,10 @@ FrameResult read_frame_full_with_deadline(int fd, const std::array<uint8_t, 32>*
         if (pr < 0) {
             if (errno == EINTR)
                 continue;
-            throw std::runtime_error("veyron: poll failed during frame read");
+            throw VeyronIoError("poll failed during frame read");
         }
         if (pr == 0)
-            throw std::runtime_error("veyron: timed out");
+            throw VeyronTimeout();
 
         // Data is available; hand off with the remaining budget as the
         // mid-frame bound. Floor at 1ms so a just-signaled-readable fd
@@ -272,7 +338,7 @@ FrameResult read_frame_full_with_timeout(int fd, const std::array<uint8_t, 32>* 
     uint16_t magic;
     std::memcpy(&magic, header + 0, 2);
     if (ntohs(magic) != FRAME_MAGIC)
-        throw std::runtime_error("veyron: invalid frame magic");
+        throw VeyronFrameMagicMismatch();
 
     uint16_t flags;
     std::memcpy(&flags, header + 2, 2);
@@ -282,7 +348,7 @@ FrameResult read_frame_full_with_timeout(int fd, const std::array<uint8_t, 32>* 
     std::memcpy(&length, header + 4, 4);
     length = ntohl(length);
     if (length > MAX_PAYLOAD_SIZE)
-        throw std::runtime_error("veyron: frame payload exceeds 1 MiB limit");
+        throw VeyronPayloadTooLarge(length);
 
     uint32_t expected_crc;
     std::memcpy(&expected_crc, header + 40, 4);
@@ -294,7 +360,7 @@ FrameResult read_frame_full_with_timeout(int fd, const std::array<uint8_t, 32>* 
 
     // CRC is over the wire bytes (possibly compressed); verify before decompressing.
     if (veyron_crc32(payload.data(), payload.size()) != expected_crc)
-        throw std::runtime_error("veyron: CRC32 mismatch");
+        throw VeyronFrameCrcMismatch();
 
     // Normalize the in-memory invariant: payload is always plaintext, and the
     // header used for MAC verification describes the plaintext — mirroring
@@ -320,10 +386,10 @@ FrameResult read_frame_full_with_timeout(int fd, const std::array<uint8_t, 32>* 
                             effective_header.data(), FRAME_HEADER_SIZE,
                             result.payload.data(), result.payload.size(),
                             result.mac.data(), MAC_TAG_LEN))
-                throw std::runtime_error("veyron: MAC verification failed");
+                throw VeyronInternal("frame MAC verification failed");
         }
     } else if (session_key != nullptr) {
-        throw std::runtime_error("veyron: MAC missing on secured connection");
+        throw VeyronInternal("frame MAC verification failed");
     }
 
     return result;

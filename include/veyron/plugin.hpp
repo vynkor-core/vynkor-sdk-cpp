@@ -1,7 +1,7 @@
 #pragma once
 
 #include <chrono>
-#include <stdexcept>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,32 +10,28 @@
 
 namespace veyron {
 
+// A Veyron plugin, mirroring the Rust SDK's `Plugin` trait 1:1. Implement
+// id(), manifest(), and on_message(); everything else has a sensible default.
+//
+// Lifecycle driven by run()/run_with()/serve():
+//   1. connect to the kernel socket (VEYRON_SOCKET_PATH or the per-user default);
+//   2. register, presenting VEYRON_JWT_TOKEN when set;
+//   3. call on_init(client);
+//   4. receive loop: Ping is answered automatically; PluginShutdown exits the
+//      loop; Events go to on_event() and are auto-acked on normal return;
+//      everything else goes to on_message(), whose returned envelope (if any)
+//      is auto-sent to "kernel";
+//   5. call on_shutdown().
 class Plugin {
 public:
-    // socket_path: explicit override, else VEYRON_SOCKET_PATH resolution
-    // mirroring the kernel (XDG_RUNTIME_DIR -> /run/user/<uid> -> ~/.veyron/run).
-    // Never the world-writable shared /tmp (BUG-006).
-    // jwt_token/secret: explicit override, else VEYRON_JWT_TOKEN/VEYRON_JWT_SECRET
-    // (secured-kernel support, R5-05).
-    explicit Plugin(std::string plugin_id,
-                    std::string socket_path = "",
-                    std::vector<uint8_t> secret = {},
-                    std::string jwt_token = "")
-        : plugin_id_(std::move(plugin_id))
-        , jwt_token_(resolve_jwt_token(jwt_token))
-        , socket_path_(socket_path.empty() ? default_socket_path() : std::move(socket_path))
-        , client_(socket_path_, resolve_jwt_secret(secret)) {}
-
     virtual ~Plugin() = default;
 
-    virtual void on_init() {}
-    virtual void on_message(const Envelope& env) = 0;
-    virtual void on_shutdown() {}
+    // Unique plugin id, e.g. "weather". The id now comes from this override,
+    // not from the constructor (Rust parity).
+    virtual const std::string& id() const = 0;
 
-    // Called for each delivered Event. Default is a no-op that still lets
-    // run() send EventAck — override to act on it. Throw to skip the ack
-    // (kernel retries); a plain return acks it.
-    virtual void on_event(const Event& event) { (void)event; }
+    // Semver version reported at registration.
+    virtual std::string version() const { return "1.0.0"; }
 
     // Declared capabilities: permissions, provided actions, event
     // subscriptions, IPC targets. Default is empty (mirrors the Rust SDK's
@@ -43,62 +39,125 @@ public:
     // routing, both of which the kernel default-denies on an empty manifest.
     virtual PluginManifest manifest() const { return PluginManifest{}; }
 
-    const std::string& jwt_token() const { return jwt_token_; }
-    const std::string& socket_path() const { return socket_path_; }
+    // Called once after successful registration, before the receive loop.
+    // Use the client to subscribe, negotiate audio streams, etc.
+    virtual void on_init(VeyronClient& client) { (void)client; }
 
-    void run() {
-        client_.connect();
+    // Called for every inbound envelope not handled by the SDK (Ping/Pong,
+    // PluginShutdown and Event have dedicated handling). Return an envelope to
+    // have it auto-sent to "kernel"; return std::nullopt to send nothing.
+    // Throwing signals a fatal condition and ends the receive loop (the
+    // exception is re-thrown out of serve() after on_shutdown() runs).
+    virtual std::optional<Envelope> on_message(const Envelope& env) = 0;
 
-        Envelope ack = client_.register_plugin(plugin_id_, manifest(), jwt_token_);
-        if (!ack.plugin_register_ack().accepted()) {
-            throw std::runtime_error(
-                "veyron: registration rejected: " +
-                ack.plugin_register_ack().reject_reason());
+    // Called for each delivered Event. A normal return makes the SDK send an
+    // EventAck (kernel stops retrying) and auto-sends a returned envelope, if
+    // any. Throwing skips the ack so the kernel retries (mirrors the Rust SDK).
+    virtual std::optional<Envelope> on_event(const Event& event) {
+        (void)event;
+        return std::nullopt;
+    }
+
+    // Called once when the receive loop ends (kernel shutdown request,
+    // disconnect, or handler error).
+    virtual void on_shutdown() {}
+
+    // Connect, register, and serve until shutdown. Socket path comes from
+    // VEYRON_SOCKET_PATH, falling back to the same per-user resolution as the
+    // kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.veyron/run). Never the
+    // world-writable shared /tmp (BUG-006).
+    void run() { run_with(default_socket_path()); }
+
+    // run() against an explicit socket path. JWT credentials are still read
+    // from VEYRON_JWT_TOKEN / VEYRON_JWT_SECRET when present.
+    void run_with(const std::string& socket_path) {
+        const std::string token = resolve_jwt_token("");
+        const std::vector<uint8_t> secret = resolve_jwt_secret({});
+        VeyronClient client(socket_path, secret);
+        client.connect();
+        serve(client, token);
+    }
+
+    // Register on an existing client and run the receive loop. Building block
+    // for run(); also useful in tests.
+    void serve(VeyronClient& client, const std::string& jwt_token) {
+        client_ = &client;
+
+        PluginRegisterAck ack = client.register_full(id(), version(), manifest(), jwt_token);
+        if (!ack.accepted()) {
+            client_ = nullptr;
+            throw VeyronPermissionDenied("registration rejected: " + ack.reject_reason());
         }
 
-        on_init();
         try {
-            while (true) {
-                Envelope env = client_.recv();
-                if (env.has_plugin_shutdown()) break;
-                if (env.has_ping()) {
-                    // Answer the kernel watchdog directly — a supervised plugin
-                    // whose last Pong goes stale is SIGKILLed (AUDIT H-02).
-                    Envelope pong;
-                    pong.mutable_pong()->set_original_timestamp(env.ping().timestamp());
-                    pong.mutable_pong()->set_server_timestamp(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count());
-                    client_.send("kernel", pong);
-                    continue;
-                }
-                if (env.has_event()) {
-                    // On handler error no ack is sent — the kernel will retry
-                    // (mirrors the Rust SDK; T-06).
-                    try {
-                        on_event(env.event());
-                        client_.ack_event(env.event().event_id());
-                    } catch (...) {
-                    }
-                    continue;
-                }
-                on_message(env);
-            }
+            on_init(client);
         } catch (...) {
             on_shutdown();
-            client_.close();
+            client_ = nullptr;
             throw;
         }
+
+        // A handler error ends the receive loop (fatal condition), captured so
+        // it propagates out of serve() after on_shutdown() runs instead of being
+        // swallowed by the break — mirrors the Rust SDK (T-07).
+        std::exception_ptr handler_err;
+        while (true) {
+            Envelope env;
+            try {
+                env = client.recv();
+            } catch (...) {
+                break; // disconnect / EOF
+            }
+
+            if (env.has_plugin_shutdown())
+                break;
+
+            if (env.has_ping()) {
+                Envelope pong;
+                pong.mutable_pong()->set_original_timestamp(env.ping().timestamp());
+                pong.mutable_pong()->set_server_timestamp(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count());
+                client.send("kernel", pong);
+                continue;
+            }
+
+            if (env.has_event()) {
+                const std::string event_id = env.event().event_id();
+                // On handler error no ack is sent — the kernel will retry.
+                try {
+                    auto reply = on_event(env.event());
+                    client.ack_event(event_id);
+                    if (reply)
+                        client.send("kernel", *reply);
+                } catch (...) {
+                }
+                continue;
+            }
+
+            try {
+                auto reply = on_message(env);
+                if (reply)
+                    client.send("kernel", *reply);
+            } catch (...) {
+                handler_err = std::current_exception();
+                break;
+            }
+        }
+
         on_shutdown();
-        client_.close();
+        client_ = nullptr;
+        if (handler_err)
+            std::rethrow_exception(handler_err);
     }
 
 protected:
-    std::string  plugin_id_;
-    std::string  jwt_token_;
-    std::string  socket_path_;
-    VeyronClient client_;
+    // Non-owning view of the client being served. Set by serve() before
+    // on_init and cleared after on_shutdown; valid inside on_init / on_message /
+    // on_event / on_shutdown for plugins that need to send additional traffic
+    // (e.g. multi-message streaming responses).
+    VeyronClient* client_ = nullptr;
 };
 
 } // namespace veyron

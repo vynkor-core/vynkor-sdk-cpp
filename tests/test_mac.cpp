@@ -147,7 +147,7 @@ TEST(FramingMac, ReadFrameFullRejectsTamperedTag) {
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    EXPECT_THROW(veyron::read_frame_full(read_fd, &key), std::runtime_error);
+    EXPECT_THROW(veyron::read_frame_full(read_fd, &key), veyron::VeyronInternal);
     ::close(read_fd);
 }
 
@@ -316,7 +316,7 @@ TEST(FramingCompressed, RejectsBadMacOnCompressedFrame) {
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    EXPECT_THROW(veyron::read_frame_full(read_fd, &wrong_key), std::runtime_error);
+    EXPECT_THROW(veyron::read_frame_full(read_fd, &wrong_key), veyron::VeyronInternal);
     ::close(read_fd);
 }
 

@@ -7,11 +7,16 @@ talks to the kernel over a Unix domain socket using the Veyron wire protocol:
 framed messages carrying Protobuf envelopes, with optional zstd compression,
 HMAC-SHA256 frame authentication, and fragmentation.
 
+The public API mirrors the [Rust reference SDK](https://crates.io/crates/veyron-sdk)
+one-for-one — `VeyronClient` matches `veyron_sdk::VeyronClient`, and `Plugin`
+matches the `veyron_sdk::Plugin` trait (full parity; the `Plugin` callback model
+is a breaking change from `0.1.0`).
+
 ## Protocol source
 
 `proto/veyron_protocol.proto` is vendored from
 [`veyron-wire`](https://crates.io/crates/veyron-wire)'s `proto/` (wire
-protocol **v1.4** as of the latest sync). It's copied by hand, not
+protocol **v1.5** as of the latest sync). It's copied by hand, not
 path-referenced — re-sync it when the protocol changes upstream.
 
 ## Requirements
@@ -34,12 +39,27 @@ ctest --test-dir build
 
 class EchoPlugin : public veyron::Plugin {
 public:
-    EchoPlugin() : veyron::Plugin("echo-plugin") {}
+    const std::string& id() const override { return id_; }
 
-    void on_message(const veyron::Envelope& env) override {
-        if (!env.has_action_request()) return;
-        // handle env.action_request(), reply via client()
+    veyron::PluginManifest manifest() const override {
+        veyron::PluginManifest m;
+        m.add_actions("echo");
+        return m;
     }
+
+    std::optional<veyron::Envelope> on_message(const veyron::Envelope& env) override {
+        if (!env.has_action_request()) return std::nullopt;
+        const auto& req = env.action_request();
+        veyron::Envelope out;
+        auto* resp = out.mutable_action_response();
+        resp->set_action_id(req.action_id());
+        resp->set_status(veyron::ActionStatus::ACTION_OK);
+        resp->set_data_json(req.params_json());
+        return out; // auto-sent to "kernel" by the SDK
+    }
+
+private:
+    std::string id_ = "echo-plugin";
 };
 
 int main() {
@@ -48,51 +68,115 @@ int main() {
 }
 ```
 
-`Plugin::run` connects, registers, and serves until the kernel asks the
-plugin to shut down. The SDK answers `Ping` automatically and exits the loop
-on `PluginShutdown`. See `examples/echo_plugin.cpp` for a fuller example.
+`Plugin::run` connects, registers, and serves until the kernel asks the plugin
+to shut down. The SDK answers `Ping` automatically, acknowledges delivered
+events after `on_event` returns normally, and exits the loop on
+`PluginShutdown`.
+
+### The `Plugin` model (Rust `Plugin` trait parity)
+
+| Member | Default | Notes |
+|--------|---------|-------|
+| `virtual const std::string& id() const = 0` | — | **required**; the plugin id now comes from this override, not the constructor. |
+| `virtual std::string version() const` | `"1.0.0"` | reported at registration. |
+| `virtual PluginManifest manifest() const` | empty | permissions / actions / events / ipc_targets. |
+| `virtual void on_init(VeyronClient&)` | no-op | called once after registration; the client is passed in. |
+| `virtual std::optional<Envelope> on_message(const Envelope&) = 0` | — | **required**; return an envelope to auto-send it to `"kernel"`, `std::nullopt` to send nothing. Throwing is a fatal error (re-thrown after `on_shutdown`). |
+| `virtual std::optional<Envelope> on_event(const Event&)` | `std::nullopt` | normal return auto-acks the event; throwing skips the ack (kernel retries). |
+| `virtual void on_shutdown()` | no-op | runs when the loop ends. |
+
+`run()` / `run_with(socket_path)` / `serve(client, jwt_token)` mirror Rust's
+`Plugin::run` / `run_with` / `serve`. `serve` registers via
+`register_full(id(), version(), manifest(), jwt_token)` and rejects a
+non-accepted registration with `VeyronPermissionDenied`. The `client_` member
+is a non-owning pointer to the served client, valid inside the callback methods
+for plugins that send extra traffic (e.g. multi-message streaming replies).
 
 ## Environment
 
 | Variable             | Meaning                                                        |
 |----------------------|-----------------------------------------------------------------|
-| `VEYRON_SOCKET_PATH` | Kernel UDS path. Default: `XDG_RUNTIME_DIR` → `/run/user/<uid>` → `~/.veyron/run` (never shared `/tmp`). |
+| `VEYRON_SOCKET_PATH` | Kernel UDS path. Default: `XDG_RUNTIME_DIR` → `/run/user/<uid>` → `~/.veyron/run` (never shared `/tmp`; the `~/.veyron/run` fallback is created with mode `0700`). |
 | `VEYRON_JWT_TOKEN`   | JWT presented at registration (required on secured kernels).   |
 | `VEYRON_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags after registration. |
+
+## Errors
+
+`VeyronError` (in `veyron/error.hpp`) is a typed exception hierarchy mirroring
+Rust's `WireError` enum variant-for-variant. Every subclass derives from
+`std::runtime_error`, so existing `catch (const std::runtime_error&)` and
+`catch (...)` sites keep working while new code can discriminate:
+
+| Exception | Rust variant |
+|-----------|--------------|
+| `VeyronIoError` | `WireError::Io` |
+| `VeyronProtoError` | `WireError::Proto` |
+| `VeyronFrameMagicMismatch` | `WireError::FrameMagicMismatch` |
+| `VeyronFrameCrcMismatch` | `WireError::FrameCrcMismatch` |
+| `VeyronFrameReadTimeout` | `WireError::FrameReadTimeout` |
+| `VeyronPayloadTooLarge` | `WireError::PayloadTooLarge` |
+| `VeyronTimeout` | `WireError::Timeout` |
+| `VeyronPermissionDenied` | `WireError::PermissionDenied` |
+| `VeyronInternal` | `WireError::Internal` |
 
 ## Client API
 
 For lower-level control, use `VeyronClient` directly:
 
 ```cpp
-VeyronClient client(socket_path, secret);
-client.connect();
-auto ack = client.register_plugin("weather", manifest, jwt_token);
+#include "veyron/client.hpp"
+
+auto client = veyron::VeyronClient::connect_with_secret(socket_path, secret);
+auto ack = client.register_with_token("weather", manifest, jwt_token);
+// Rust's `register` is a reserved C++ keyword; the tokenless overload is
+// `register_plugin(plugin_id, manifest)` (version "1.0.0", no token).
 
 client.subscribe({"alarm.fired"});
+client.unsubscribe({"alarm.fired"});
 auto pub_ack = client.publish_event("weather.updated",
                                      std::vector<uint8_t>{'{', '}'}, 5000);
-double latency = client.ping();
+auto latency = client.ping(); // std::chrono::duration<double, std::milli>
 
 auto resp = client.send_action("get_weather", std::vector<uint8_t>{'{', '}'}, 5000);
+auto cmd_ack = client.send_command("cmd-1", "health_check", {});
 
 std::string action_id = client.send_action_streaming("transcribe", 30000);
 client.send_request_chunk(action_id, 0, std::vector<uint8_t>{'h', 'i'}, true);
 client.send_response_chunk(action_id, 0, std::vector<uint8_t>{'o', 'k'});
 client.close_session(action_id, "done");
+
+// raw / audio sends
+client.send_raw("kernel", std::vector<uint8_t>{...});
+client.send_audio_chunk("peer-plugin", chunk);
+client.send_raw_audio("peer-plugin", std::vector<uint8_t>{...});
 ```
+
+### Connecting
+
+- `VeyronClient(socket_path, secret)` + member `connect()` — the primary ctor pattern.
+- `VeyronClient::connect(socket_path)` / `connect_with_secret(socket_path, secret)` / `connect_from_env()` — static factories returning a connected client (Rust parity).
+- `VeyronClient(fd, secret)` — adopt an already-connected fd (tests).
+- `is_secured()` — true once a secured registration has derived the frame-MAC key.
+
+### Registration
+
+`register_plugin(plugin_id, manifest)`, `register_with_token(plugin_id, manifest, jwt_token)`,
+and `register_full(plugin_id, version, manifest, jwt_token)` all return the
+typed `PluginRegisterAck` (no raw `Envelope`). On a secured kernel the ack's
+`session_nonce` is combined with the shared secret and plugin id to derive the
+per-frame MAC key automatically.
 
 `publish_event` requires `PERMISSION_EVENT_PUBLISH`; `timeout_ms == 0` uses
 the kernel's 30s default. It returns the kernel's `EventPublishAck` as-is —
 inspect `ack.status()` yourself (`EVENT_PUBLISH_OK`/`ERROR`/`PERMISSION_DENY`)
-— and only throws `std::runtime_error` on a kernel `Error` envelope or on
-timeout. Requests and responses are matched on a single connection; drive
-request/response traffic from one thread.
+— and only throws `VeyronInternal` on a kernel `Error` envelope or
+`VeyronTimeout` on timeout. Requests and responses are matched on a single
+connection; drive request/response traffic from one thread.
 
 `send_action` follows the same `timeout_ms == 0` → 30s-default convention
 and returns the kernel's `ActionResponse` as-is (inspect `.status()`
-yourself). It throws `std::runtime_error` on a kernel `Error` envelope, on
-an `ActionStreamAbort` for this `action_id`, or on timeout.
+yourself). It throws `VeyronInternal` on a kernel `Error` envelope, on an
+`ActionStreamAbort` for this `action_id`, or `VeyronTimeout` on timeout.
 `send_action_streaming` fires an `ActionRequest{streaming: true}` and
 returns its generated `action_id` immediately, without waiting for any
 response — drive `recv()`/chunks yourself afterward. `send_request_chunk`,

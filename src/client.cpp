@@ -8,7 +8,8 @@
 #include <chrono>
 #include <cerrno>
 #include <cstring>
-#include <stdexcept>
+
+#include "veyron/env.hpp"
 
 namespace veyron {
 
@@ -23,6 +24,12 @@ std::string next_action_id() {
         std::chrono::system_clock::now().time_since_epoch()).count();
     return "act-" + std::to_string(now_ms) + "-" + std::to_string(seq);
 }
+
+uint64_t unix_millis() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+}
 } // namespace
 
 VeyronClient::VeyronClient(std::string socket_path, std::vector<uint8_t> secret)
@@ -35,16 +42,61 @@ VeyronClient::VeyronClient(int fd, std::vector<uint8_t> secret)
 
 VeyronClient::~VeyronClient() { close(); }
 
+VeyronClient::VeyronClient(VeyronClient&& other) noexcept
+    : socket_path_(std::move(other.socket_path_))
+    , fd_(other.fd_)
+    , secret_(std::move(other.secret_))
+    , session_key_(std::move(other.session_key_))
+    , reassembly_(std::move(other.reassembly_))
+    , next_stream_id_(other.next_stream_id_) {
+    other.fd_ = -1;
+}
+
+VeyronClient& VeyronClient::operator=(VeyronClient&& other) noexcept {
+    if (this != &other) {
+        close();
+        socket_path_ = std::move(other.socket_path_);
+        fd_ = other.fd_;
+        secret_ = std::move(other.secret_);
+        session_key_ = std::move(other.session_key_);
+        reassembly_ = std::move(other.reassembly_);
+        next_stream_id_ = other.next_stream_id_;
+        other.fd_ = -1;
+    }
+    return *this;
+}
+
+VeyronClient VeyronClient::connect(const std::string& socket_path) {
+    VeyronClient client(socket_path);
+    client.connect();
+    return client;
+}
+
+VeyronClient VeyronClient::connect_with_secret(const std::string& socket_path,
+                                               const std::vector<uint8_t>& secret) {
+    VeyronClient client(socket_path, secret);
+    client.connect();
+    return client;
+}
+
+VeyronClient VeyronClient::connect_from_env() {
+    const std::string socket_path = default_socket_path();
+    const std::vector<uint8_t> secret = resolve_jwt_secret({});
+    if (!secret.empty())
+        return connect_with_secret(socket_path, secret);
+    return connect(socket_path);
+}
+
 void VeyronClient::connect() {
     close();
     fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd_ < 0)
-        throw std::runtime_error("veyron: socket() failed");
+        throw VeyronIoError("socket() failed");
 
     if (socket_path_.size() >= sizeof(sockaddr_un{}.sun_path)) {
         ::close(fd_);
         fd_ = -1;
-        throw std::runtime_error("veyron: socket path too long: " + socket_path_);
+        throw VeyronIoError("socket path too long: " + socket_path_);
     }
 
     struct sockaddr_un addr{};
@@ -54,7 +106,7 @@ void VeyronClient::connect() {
     if (::connect(fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
         ::close(fd_);
         fd_ = -1;
-        throw std::runtime_error("veyron: connect() failed: " + socket_path_);
+        throw VeyronIoError("connect() failed: " + socket_path_);
     }
 }
 
@@ -65,39 +117,99 @@ void VeyronClient::close() {
     }
 }
 
-Envelope VeyronClient::register_plugin(const std::string& plugin_id,
-                                        const std::string& jwt_token) {
-    return register_plugin(plugin_id, PluginManifest{}, jwt_token);
+PluginRegisterAck VeyronClient::register_plugin(const std::string& plugin_id,
+                                                const PluginManifest& manifest) {
+    return register_with_token(plugin_id, manifest, "");
 }
 
-Envelope VeyronClient::register_plugin(const std::string& plugin_id,
-                                        const PluginManifest& manifest,
-                                        const std::string& jwt_token) {
-    plugin_id_ = plugin_id;
+PluginRegisterAck VeyronClient::register_with_token(const std::string& plugin_id,
+                                                    const PluginManifest& manifest,
+                                                    const std::string& jwt_token) {
+    return register_full(plugin_id, "1.0.0", manifest, jwt_token);
+}
 
+PluginRegisterAck VeyronClient::register_full(const std::string& plugin_id,
+                                              const std::string& version,
+                                              const PluginManifest& manifest,
+                                              const std::string& jwt_token) {
     Envelope env;
     auto* reg = env.mutable_plugin_register();
     reg->set_plugin_id(plugin_id);
+    reg->set_version(version);
     reg->set_jwt_token(jwt_token);
     *reg->mutable_manifest() = manifest;
 
     // Registration frame is always CRC-only; session_key not yet derived.
-    send_envelope_no_mac("kernel", env);
+    send("kernel", env);
     Envelope ack = recv();
 
-    if (ack.has_plugin_register_ack() && !secret_.empty()) {
-        const auto& nonce_str = ack.plugin_register_ack().session_nonce();
-        if (!nonce_str.empty()) {
-            std::vector<uint8_t> nonce(nonce_str.begin(), nonce_str.end());
-            session_key_ = derive_session_key(secret_, nonce, plugin_id);
+    if (ack.has_plugin_register_ack()) {
+        if (!secret_.empty()) {
+            const auto& nonce_str = ack.plugin_register_ack().session_nonce();
+            if (!nonce_str.empty()) {
+                std::vector<uint8_t> nonce(nonce_str.begin(), nonce_str.end());
+                session_key_ = derive_session_key(secret_, nonce, plugin_id);
+            }
         }
+        return ack.plugin_register_ack();
     }
-
-    return ack;
+    if (ack.has_error()) {
+        throw VeyronInternal("registration rejected: " + ack.error().message() +
+                             " (" + ack.error().details() + ")");
+    }
+    throw VeyronInternal("expected PluginRegisterAck");
 }
 
 void VeyronClient::send(const std::string& target, const Envelope& env) {
-    send_envelope(target, env);
+    std::string bytes;
+    env.SerializeToString(&bytes);
+    send_raw(target, std::vector<uint8_t>(bytes.begin(), bytes.end()));
+}
+
+void VeyronClient::send_raw(const std::string& target, const std::vector<uint8_t>& payload) {
+    send_raw_with_flags(target, 0, payload);
+}
+
+void VeyronClient::send_raw_with_flags(const std::string& target,
+                                       uint16_t extra_flags,
+                                       const std::vector<uint8_t>& payload) {
+    const uint16_t base_flags = session_key_.has_value() ? FLAG_MAC_PRESENT : 0;
+    const std::array<uint8_t, 32>* key_ptr =
+        session_key_.has_value() ? &session_key_.value() : nullptr;
+    write_all(pack_frame_raw(target, static_cast<uint16_t>(base_flags | extra_flags),
+                             payload, key_ptr));
+}
+
+void VeyronClient::send_fragmented(const std::string& target,
+                                   const std::vector<uint8_t>& payload,
+                                   size_t chunk_size) {
+    if (payload.size() > MAX_PAYLOAD_SIZE)
+        throw VeyronPayloadTooLarge(payload.size());
+    if (chunk_size == 0 || chunk_size + FRAG_HEADER_SIZE > MAX_PAYLOAD_SIZE)
+        throw VeyronInternal("invalid fragment chunk_size: " + std::to_string(chunk_size));
+
+    size_t total = payload.empty() ? 1 : (payload.size() + chunk_size - 1) / chunk_size;
+    if (total > 0xFFFF)
+        throw VeyronInternal("payload needs " + std::to_string(total) + " fragments; max is 65535");
+
+    const uint32_t stream_id = next_stream_id_;
+    next_stream_id_ = next_stream_id_ + 1;
+    if (next_stream_id_ == 0)
+        next_stream_id_ = 1;
+    const uint16_t fragment_id = static_cast<uint16_t>(stream_id & 0xFFFF);
+
+    for (size_t seq = 0; seq < total; ++seq) {
+        const size_t start = seq * chunk_size;
+        const size_t len = std::min(chunk_size, payload.size() - start);
+
+        std::vector<uint8_t> frag_payload =
+            pack_frag_header(fragment_id, static_cast<uint16_t>(seq),
+                             static_cast<uint16_t>(total), stream_id);
+        frag_payload.insert(frag_payload.end(),
+                            payload.begin() + start, payload.begin() + start + len);
+
+        send_raw_with_flags(target, FLAG_FRAGMENTED, frag_payload);
+    }
 }
 
 std::optional<FrameResult> VeyronClient::absorb_fragment(FrameResult frame) {
@@ -112,18 +224,19 @@ std::optional<FrameResult> VeyronClient::absorb_fragment(FrameResult frame) {
 
     auto hdr = parse_frag_header(frame.payload.data(), frame.payload.size());
     if (!hdr)
-        throw std::runtime_error("veyron: fragment header too short");
+        throw VeyronInternal("fragment header too short");
     if (hdr->total == 0 || hdr->sequence >= hdr->total)
-        throw std::runtime_error("veyron: invalid fragment header");
+        throw VeyronInternal("invalid fragment header: seq " + std::to_string(hdr->sequence) +
+                             " / total " + std::to_string(hdr->total));
 
     auto it = reassembly_.find(hdr->stream_id);
     if (it != reassembly_.end()) {
         if (it->second.total != hdr->total) {
             reassembly_.erase(it);
-            throw std::runtime_error("veyron: fragment total mismatch within stream");
+            throw VeyronInternal("fragment total mismatch within stream");
         }
     } else if (reassembly_.size() >= MAX_REASSEMBLY_STREAMS) {
-        throw std::runtime_error("veyron: too many concurrent fragment streams");
+        throw VeyronInternal("too many concurrent fragment streams");
     }
 
     auto emplaced = reassembly_.try_emplace(
@@ -141,7 +254,7 @@ std::optional<FrameResult> VeyronClient::absorb_fragment(FrameResult frame) {
     const size_t new_total = buf.buffered_bytes - replaced_len + chunk.size();
     if (new_total > MAX_PAYLOAD_SIZE) {
         reassembly_.erase(hdr->stream_id);
-        throw std::runtime_error("veyron: reassembled payload too large");
+        throw VeyronPayloadTooLarge(MAX_PAYLOAD_SIZE + 1);
     }
     buf.buffered_bytes = new_total;
     buf.fragments[hdr->sequence] = std::move(chunk);
@@ -188,46 +301,25 @@ FrameResult VeyronClient::recv_frame_with_deadline(std::chrono::steady_clock::ti
 
 Envelope VeyronClient::recv() {
     auto result = recv_frame();
+    if (result.flags & FLAG_RAW_BINARY)
+        throw VeyronInternal("received raw-binary frame; use recv_frame() for audio");
     Envelope env;
     if (!env.ParseFromArray(result.payload.data(),
                             static_cast<int>(result.payload.size())))
-        throw std::runtime_error("veyron: protobuf parse failed");
+        throw VeyronProtoError("protobuf parse failed");
     return env;
 }
 
-void VeyronClient::send_fragmented(const std::string& target,
-                                   const std::vector<uint8_t>& payload,
-                                   size_t chunk_size) {
-    if (payload.size() > MAX_PAYLOAD_SIZE)
-        throw std::runtime_error("veyron: payload exceeds 1 MiB limit");
-    if (chunk_size == 0 || chunk_size + FRAG_HEADER_SIZE > MAX_PAYLOAD_SIZE)
-        throw std::runtime_error("veyron: invalid fragment chunk_size");
-
-    size_t total = payload.empty() ? 1 : (payload.size() + chunk_size - 1) / chunk_size;
-    if (total > 0xFFFF)
-        throw std::runtime_error("veyron: payload needs too many fragments");
-
-    const uint32_t stream_id = next_stream_id_;
-    next_stream_id_ = next_stream_id_ + 1;
-    if (next_stream_id_ == 0)
-        next_stream_id_ = 1;
-    const uint16_t fragment_id = static_cast<uint16_t>(stream_id & 0xFFFF);
-
-    for (size_t seq = 0; seq < total; ++seq) {
-        const size_t start = seq * chunk_size;
-        const size_t len = std::min(chunk_size, payload.size() - start);
-
-        std::vector<uint8_t> frag_payload =
-            pack_frag_header(fragment_id, static_cast<uint16_t>(seq),
-                             static_cast<uint16_t>(total), stream_id);
-        frag_payload.insert(frag_payload.end(),
-                            payload.begin() + start, payload.begin() + start + len);
-
-        std::vector<uint8_t> frame = session_key_.has_value()
-            ? pack_frame_mac(target, frag_payload, session_key_.value(), FLAG_FRAGMENTED)
-            : pack_frame(target, frag_payload, FLAG_FRAGMENTED);
-        write_all(frame);
-    }
+Envelope VeyronClient::recv_timeout(std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto result = recv_frame_with_deadline(deadline);
+    if (result.flags & FLAG_RAW_BINARY)
+        throw VeyronInternal("received raw-binary frame; use recv_frame() for audio");
+    Envelope env;
+    if (!env.ParseFromArray(result.payload.data(),
+                            static_cast<int>(result.payload.size())))
+        throw VeyronProtoError("protobuf parse failed");
+    return env;
 }
 
 void VeyronClient::subscribe(const std::vector<std::string>& event_types) {
@@ -235,29 +327,21 @@ void VeyronClient::subscribe(const std::vector<std::string>& event_types) {
     auto* sub = env.mutable_subscribe();
     for (const auto& t : event_types)
         sub->add_event_types(t);
-    send_envelope("kernel", env);
+    send("kernel", env);
+}
+
+void VeyronClient::unsubscribe(const std::vector<std::string>& event_types) {
+    Envelope env;
+    auto* un = env.mutable_unsubscribe();
+    for (const auto& t : event_types)
+        un->add_event_types(t);
+    send("kernel", env);
 }
 
 void VeyronClient::ack_event(const std::string& event_id) {
     Envelope env;
     env.mutable_event_ack()->set_event_id(event_id);
-    send_envelope("kernel", env);
-}
-
-double VeyronClient::ping() {
-    using clk = std::chrono::steady_clock;
-    using sys = std::chrono::system_clock;
-
-    Envelope env;
-    auto* p = env.mutable_ping();
-    p->set_timestamp(static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            sys::now().time_since_epoch()).count()));
-
-    auto t0 = clk::now();
-    send_envelope("kernel", env);
-    recv();
-    return std::chrono::duration<double>(clk::now() - t0).count();
+    send("kernel", env);
 }
 
 Envelope VeyronClient::wait_for_response(std::chrono::steady_clock::time_point deadline,
@@ -266,7 +350,7 @@ Envelope VeyronClient::wait_for_response(std::chrono::steady_clock::time_point d
         auto frame = recv_frame_with_deadline(deadline);
         Envelope resp;
         if (!resp.ParseFromArray(frame.payload.data(), static_cast<int>(frame.payload.size())))
-            throw std::runtime_error("veyron: protobuf parse failed");
+            throw VeyronProtoError("protobuf parse failed");
         if (is_terminal(resp))
             return resp;
         // unrelated traffic while waiting — discard, keep waiting
@@ -280,16 +364,17 @@ EventPublishAck VeyronClient::publish_event(const std::string& event_type,
     auto* pub = env.mutable_event_publish();
     pub->set_event_type(event_type);
     pub->set_payload_json(payload_json.data(), payload_json.size());
-    send_envelope("kernel", env);
+    send("kernel", env);
 
-    const auto timeout = std::chrono::milliseconds(timeout_ms == 0 ? 30000 : timeout_ms);
+    const auto timeout = timeout_ms == 0 ? DEFAULT_REQUEST_TIMEOUT
+                                         : std::chrono::milliseconds(timeout_ms);
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     Envelope resp = wait_for_response(deadline, [](const Envelope& e) {
         return e.has_event_publish_ack() || e.has_error();
     });
     if (resp.has_error())
-        throw std::runtime_error("veyron: kernel error: " + resp.error().message() +
-                                 " (" + resp.error().details() + ")");
+        throw VeyronInternal("kernel error: " + resp.error().message() +
+                             " (" + resp.error().details() + ")");
     return resp.event_publish_ack();
 }
 
@@ -304,9 +389,10 @@ ActionResponse VeyronClient::send_action(const std::string& action,
     req->set_params_json(params_json.data(), params_json.size());
     req->set_timeout_ms(timeout_ms);
     req->set_streaming(false);
-    send_envelope("kernel", env);
+    send("kernel", env);
 
-    const auto timeout = std::chrono::milliseconds(timeout_ms == 0 ? 30000 : timeout_ms);
+    const auto timeout = timeout_ms == 0 ? DEFAULT_REQUEST_TIMEOUT
+                                         : std::chrono::milliseconds(timeout_ms);
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     Envelope resp = wait_for_response(deadline, [&](const Envelope& e) {
         return (e.has_action_response() && e.action_response().action_id() == action_id) ||
@@ -314,10 +400,10 @@ ActionResponse VeyronClient::send_action(const std::string& action,
                e.has_error();
     });
     if (resp.has_error())
-        throw std::runtime_error("veyron: kernel error: " + resp.error().message() +
-                                 " (" + resp.error().details() + ")");
+        throw VeyronInternal("kernel error: " + resp.error().message() +
+                             " (" + resp.error().details() + ")");
     if (resp.has_action_stream_abort())
-        throw std::runtime_error("veyron: stream aborted: " + resp.action_stream_abort().reason());
+        throw VeyronInternal("stream aborted: " + resp.action_stream_abort().reason());
     return resp.action_response();
 }
 
@@ -329,7 +415,7 @@ std::string VeyronClient::send_action_streaming(const std::string& action, uint3
     req->set_action(action);
     req->set_timeout_ms(timeout_ms);
     req->set_streaming(true);
-    send_envelope("kernel", env);
+    send("kernel", env);
     return action_id;
 }
 
@@ -341,7 +427,7 @@ void VeyronClient::send_request_chunk(const std::string& action_id, uint32_t seq
     c->set_seq(seq);
     c->set_chunk(chunk.data(), chunk.size());
     c->set_final(is_final);
-    send_envelope("kernel", env);
+    send("kernel", env);
 }
 
 void VeyronClient::send_response_chunk(const std::string& action_id, uint32_t seq,
@@ -351,7 +437,7 @@ void VeyronClient::send_response_chunk(const std::string& action_id, uint32_t se
     c->set_action_id(action_id);
     c->set_seq(seq);
     c->set_chunk(chunk.data(), chunk.size());
-    send_envelope("kernel", env);
+    send("kernel", env);
 }
 
 void VeyronClient::close_session(const std::string& action_id, const std::string& reason) {
@@ -359,7 +445,45 @@ void VeyronClient::close_session(const std::string& action_id, const std::string
     auto* sc = env.mutable_session_close();
     sc->set_action_id(action_id);
     sc->set_reason(reason);
-    send_envelope("kernel", env);
+    send("kernel", env);
+}
+
+KernelCommandAck VeyronClient::send_command(const std::string& command_id,
+                                            const std::string& command,
+                                            const std::vector<uint8_t>& params_json) {
+    Envelope env;
+    auto* kc = env.mutable_kernel_command();
+    kc->set_command_id(command_id);
+    kc->set_command(command);
+    kc->set_params_json(params_json.data(), params_json.size());
+    send("kernel", env);
+
+    Envelope resp = recv();
+    if (!resp.has_kernel_command_ack())
+        throw VeyronInternal("expected KernelCommandAck");
+    return resp.kernel_command_ack();
+}
+
+std::chrono::duration<double, std::milli> VeyronClient::ping() {
+    Envelope env;
+    env.mutable_ping()->set_timestamp(unix_millis());
+
+    const auto t0 = std::chrono::steady_clock::now();
+    send("kernel", env);
+    Envelope resp = recv();
+    if (!resp.has_pong())
+        throw VeyronInternal("expected Pong");
+    return std::chrono::steady_clock::now() - t0;
+}
+
+void VeyronClient::send_audio_chunk(const std::string& target, const AudioStreamChunk& chunk) {
+    Envelope env;
+    *env.mutable_audio_stream_chunk() = chunk;
+    send(target, env);
+}
+
+void VeyronClient::send_raw_audio(const std::string& target, const std::vector<uint8_t>& data) {
+    send_raw_with_flags(target, FLAG_RAW_BINARY, data);
 }
 
 void VeyronClient::write_all(const std::vector<uint8_t>& frame) {
@@ -370,30 +494,10 @@ void VeyronClient::write_all(const std::vector<uint8_t>& frame) {
         if (written < 0 && errno == EINTR)
             continue;
         if (written <= 0)
-            throw std::runtime_error("veyron: write() failed");
+            throw VeyronIoError("write() failed");
         ptr       += written;
         remaining -= static_cast<size_t>(written);
     }
-}
-
-void VeyronClient::send_envelope_no_mac(const std::string& target, const Envelope& env) {
-    std::string bytes;
-    env.SerializeToString(&bytes);
-    write_all(pack_frame(target, bytes));
-}
-
-void VeyronClient::send_envelope(const std::string& target, const Envelope& env) {
-    std::string bytes;
-    env.SerializeToString(&bytes);
-
-    std::vector<uint8_t> frame;
-    if (session_key_.has_value()) {
-        std::vector<uint8_t> payload(bytes.begin(), bytes.end());
-        frame = pack_frame_mac(target, payload, session_key_.value());
-    } else {
-        frame = pack_frame(target, bytes);
-    }
-    write_all(frame);
 }
 
 } // namespace veyron

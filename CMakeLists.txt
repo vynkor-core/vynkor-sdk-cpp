@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(veyron_sdk
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "C++ SDK for writing Veyron plugins"
     HOMEPAGE_URL "https://github.com/veyron-core/veyron"
     LANGUAGES CXX
@@ -34,6 +34,7 @@ add_library(veyron_sdk_cpp STATIC
     src/mac.cpp
     src/env.cpp
     include/veyron/client.hpp
+    include/veyron/error.hpp
     include/veyron/framing.hpp
     include/veyron/mac.hpp
     include/veyron/plugin.hpp
