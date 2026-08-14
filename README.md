@@ -16,7 +16,7 @@ is a breaking change from `0.1.0`).
 
 `proto/veyron_protocol.proto` is vendored from
 [`veyron-wire`](https://crates.io/crates/veyron-wire)'s `proto/` (wire
-protocol **v1.5** as of the latest sync). It's copied by hand, not
+protocol **v1.6** as of the latest sync). It's copied by hand, not
 path-referenced — re-sync it when the protocol changes upstream.
 
 ## Requirements
