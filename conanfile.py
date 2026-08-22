@@ -12,8 +12,8 @@ class VeyronSdkConan(ConanFile):
         "HMAC frame MACs)."
     )
     license = "MIT"
-    url = "https://github.com/veyron-core/vynkor"
-    homepage = "https://github.com/veyron-core/vynkor"
+    url = "https://github.com/vynkor-core/vynkor"
+    homepage = "https://github.com/vynkor-core/vynkor"
     topics = ("vynkor", "plugin", "ipc", "sdk", "kernel")
 
     package_type = "static-library"
