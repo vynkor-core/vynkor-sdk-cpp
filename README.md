@@ -14,7 +14,7 @@ is a breaking change from `0.1.0`).
 
 ## Protocol source
 
-`proto/veyron_protocol.proto` is vendored from
+`proto/vynkor_protocol.proto` is vendored from
 [`veyron-wire`](https://crates.io/crates/veyron-wire)'s `proto/` (wire
 protocol **v1.6** as of the latest sync). It's copied by hand, not
 path-referenced — re-sync it when the protocol changes upstream.
@@ -35,25 +35,25 @@ ctest --test-dir build
 ## Quick start
 
 ```cpp
-#include "veyron/plugin.hpp"
+#include "vynkor/plugin.hpp"
 
-class EchoPlugin : public veyron::Plugin {
+class EchoPlugin : public vynkor::Plugin {
 public:
     const std::string& id() const override { return id_; }
 
-    veyron::PluginManifest manifest() const override {
-        veyron::PluginManifest m;
+    vynkor::PluginManifest manifest() const override {
+        vynkor::PluginManifest m;
         m.add_actions("echo");
         return m;
     }
 
-    std::optional<veyron::Envelope> on_message(const veyron::Envelope& env) override {
+    std::optional<vynkor::Envelope> on_message(const vynkor::Envelope& env) override {
         if (!env.has_action_request()) return std::nullopt;
         const auto& req = env.action_request();
-        veyron::Envelope out;
+        vynkor::Envelope out;
         auto* resp = out.mutable_action_response();
         resp->set_action_id(req.action_id());
-        resp->set_status(veyron::ActionStatus::ACTION_OK);
+        resp->set_status(vynkor::ActionStatus::ACTION_OK);
         resp->set_data_json(req.params_json());
         return out; // auto-sent to "kernel" by the SDK
     }
@@ -96,13 +96,13 @@ for plugins that send extra traffic (e.g. multi-message streaming replies).
 
 | Variable             | Meaning                                                        |
 |----------------------|-----------------------------------------------------------------|
-| `VEYRON_SOCKET_PATH` | Kernel UDS path. Default: `XDG_RUNTIME_DIR` → `/run/user/<uid>` → `~/.veyron/run` (never shared `/tmp`; the `~/.veyron/run` fallback is created with mode `0700`). |
-| `VEYRON_JWT_TOKEN`   | JWT presented at registration (required on secured kernels).   |
-| `VEYRON_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags after registration. |
+| `VYN_SOCKET_PATH` | Kernel UDS path. Default: `XDG_RUNTIME_DIR` → `/run/user/<uid>` → `~/.local/state/vyn/run` (never shared `/tmp`; the `~/.local/state/vyn/run` fallback is created with mode `0700`). |
+| `VYN_JWT_TOKEN`   | JWT presented at registration (required on secured kernels).   |
+| `VYN_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags after registration. |
 
 ## Errors
 
-`VeyronError` (in `veyron/error.hpp`) is a typed exception hierarchy mirroring
+`VeyronError` (in `vynkor/error.hpp`) is a typed exception hierarchy mirroring
 Rust's `WireError` enum variant-for-variant. Every subclass derives from
 `std::runtime_error`, so existing `catch (const std::runtime_error&)` and
 `catch (...)` sites keep working while new code can discriminate:
@@ -124,9 +124,9 @@ Rust's `WireError` enum variant-for-variant. Every subclass derives from
 For lower-level control, use `VeyronClient` directly:
 
 ```cpp
-#include "veyron/client.hpp"
+#include "vynkor/client.hpp"
 
-auto client = veyron::VeyronClient::connect_with_secret(socket_path, secret);
+auto client = vynkor::VeyronClient::connect_with_secret(socket_path, secret);
 auto ack = client.register_with_token("weather", manifest, jwt_token);
 // Rust's `register` is a reserved C++ keyword; the tokenless overload is
 // `register_plugin(plugin_id, manifest)` (version "1.0.0", no token).
@@ -188,7 +188,7 @@ of a stream is terminated by an ordinary `ActionResponse`.
 
 ```cmake
 find_package(veyron-sdk REQUIRED)
-target_link_libraries(my_plugin PRIVATE veyron::sdk)
+target_link_libraries(my_plugin PRIVATE vynkor::sdk)
 ```
 
 A `conanfile.py` is present in this directory, but the package is **not

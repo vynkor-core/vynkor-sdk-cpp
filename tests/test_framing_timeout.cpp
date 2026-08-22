@@ -2,7 +2,7 @@
 // sends a partial frame and then stops. Uses a short custom deadline (the
 // production 10s default would make this test itself slow-loris the suite).
 #include <gtest/gtest.h>
-#include "veyron/framing.hpp"
+#include "vynkor/framing.hpp"
 
 #include <arpa/inet.h>
 #include <chrono>
@@ -10,7 +10,7 @@
 #include <thread>
 #include <unistd.h>
 
-using namespace veyron;
+using namespace vynkor;
 
 static std::pair<int,int> make_pipe() {
     int fds[2];

@@ -8,11 +8,11 @@
 #include <chrono>
 #include <thread>
 
-#include "veyron/client.hpp"
-#include "veyron/framing.hpp"
-#include "veyron_protocol.pb.h"
+#include "vynkor/client.hpp"
+#include "vynkor/framing.hpp"
+#include "vynkor_protocol.pb.h"
 
-using namespace veyron;
+using namespace vynkor;
 
 namespace {
 

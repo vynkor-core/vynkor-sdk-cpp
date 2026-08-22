@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
-#include "veyron/error.hpp"
-#include "veyron/mac.hpp"
+#include "vynkor/error.hpp"
+#include "vynkor/mac.hpp"
 
-namespace veyron {
+namespace vynkor {
 
 static constexpr uint16_t FRAME_MAGIC       = 0x5652;
 static constexpr size_t   FRAME_HEADER_SIZE = 44;
@@ -53,7 +53,7 @@ std::optional<FragmentHeader> parse_frag_header(const uint8_t* payload, size_t l
 //   [44+N..] MAC tag (32 bytes) — present only when FLAG_MAC_PRESENT is set
 
 // CRC-32/ISO-HDLC
-uint32_t veyron_crc32(const uint8_t* data, size_t len);
+uint32_t vynkor_crc32(const uint8_t* data, size_t len);
 
 // Build CRC-only frame (no MAC). Backward-compatible. extra_flags is OR'd
 // into the wire flags (e.g. FLAG_FRAGMENTED for fragment frames).
@@ -72,7 +72,7 @@ std::vector<uint8_t> pack_frame_mac(const std::string& target,
                                     uint16_t extra_flags = 0);
 
 // Build a wire frame with outbound zstd compression and frame MAC, mirroring
-// veyron-wire's write_frame_raw ordering exactly:
+// vynkor-wire's write_frame_raw ordering exactly:
 //   1. payload >= COMPRESS_THRESHOLD (and neither FLAG_COMPRESSED nor
 //      FLAG_RAW_BINARY set) is zstd-compressed at level 3, used only if it
 //      actually shrinks the bytes (else the original is sent uncompressed);
@@ -138,4 +138,4 @@ inline FrameResult read_frame_full(int fd,
 // Backward-compat: returns only payload bytes. Does NOT verify MAC.
 std::vector<uint8_t> read_frame(int fd);
 
-} // namespace veyron
+} // namespace vynkor

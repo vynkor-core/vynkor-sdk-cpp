@@ -1,13 +1,13 @@
-#include "veyron/mac.hpp"
+#include "vynkor/mac.hpp"
 
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 
 #include <cstring>
 
-#include "veyron/error.hpp"
+#include "vynkor/error.hpp"
 
-namespace veyron {
+namespace vynkor {
 
 // ---------------------------------------------------------------------------
 // HKDF-SHA256 (RFC 5869) using OpenSSL HMAC
@@ -60,7 +60,7 @@ std::array<uint8_t, 32> derive_session_key(
     auto prk = hkdf_extract(nonce, secret);
 
     std::vector<uint8_t> info;
-    const char prefix[] = "veyron-frame-mac-v1|";
+    const char prefix[] = "vynkor-frame-mac-v1|";
     info.insert(info.end(), prefix, prefix + sizeof(prefix) - 1);
     info.insert(info.end(), plugin_id.begin(), plugin_id.end());
 
@@ -108,4 +108,4 @@ bool verify_tag(
     return CRYPTO_memcmp(expected.data(), tag, 32) == 0;
 }
 
-} // namespace veyron
+} // namespace vynkor

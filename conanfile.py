@@ -4,7 +4,7 @@ from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 
 
 class VeyronSdkConan(ConanFile):
-    name = "veyron-sdk-cpp"
+    name = "vynkor-sdk-cpp"
     version = "0.1.0"
     description = (
         "C++ SDK for writing Veyron plugins - async IPC client, Plugin "
@@ -14,7 +14,7 @@ class VeyronSdkConan(ConanFile):
     license = "MIT"
     url = "https://github.com/veyron-core/vynkor"
     homepage = "https://github.com/veyron-core/vynkor"
-    topics = ("veyron", "plugin", "ipc", "sdk", "kernel")
+    topics = ("vynkor", "plugin", "ipc", "sdk", "kernel")
 
     package_type = "static-library"
     settings = "os", "arch", "compiler", "build_type"
@@ -62,9 +62,9 @@ class VeyronSdkConan(ConanFile):
         cmake.install()
 
     def package_info(self):
-        self.cpp_info.set_property("cmake_file_name", "veyron-sdk")
-        self.cpp_info.set_property("cmake_target_name", "veyron::sdk")
-        self.cpp_info.libs = ["veyron_sdk_cpp"]
+        self.cpp_info.set_property("cmake_file_name", "vynkor-sdk")
+        self.cpp_info.set_property("cmake_target_name", "vynkor::sdk")
+        self.cpp_info.libs = ["vynkor_sdk_cpp"]
         self.cpp_info.requires = [
             "protobuf::libprotobuf",
             "openssl::openssl",

@@ -5,17 +5,17 @@
 #include <string>
 #include <vector>
 
-#include "veyron/client.hpp"
-#include "veyron/env.hpp"
+#include "vynkor/client.hpp"
+#include "vynkor/env.hpp"
 
-namespace veyron {
+namespace vynkor {
 
 // A Veyron plugin, mirroring the Rust SDK's `Plugin` trait 1:1. Implement
 // id(), manifest(), and on_message(); everything else has a sensible default.
 //
 // Lifecycle driven by run()/run_with()/serve():
-//   1. connect to the kernel socket (VEYRON_SOCKET_PATH or the per-user default);
-//   2. register, presenting VEYRON_JWT_TOKEN when set;
+//   1. connect to the kernel socket (VYN_SOCKET_PATH or the per-user default);
+//   2. register, presenting VYN_JWT_TOKEN when set;
 //   3. call on_init(client);
 //   4. receive loop: Ping is answered automatically; PluginShutdown exits the
 //      loop; Events go to on_event() and are auto-acked on normal return;
@@ -63,13 +63,13 @@ public:
     virtual void on_shutdown() {}
 
     // Connect, register, and serve until shutdown. Socket path comes from
-    // VEYRON_SOCKET_PATH, falling back to the same per-user resolution as the
-    // kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.veyron/run). Never the
+    // VYN_SOCKET_PATH, falling back to the same per-user resolution as the
+    // kernel (XDG_RUNTIME_DIR → /run/user/{uid} → ~/.local/state/vyn/run). Never the
     // world-writable shared /tmp (BUG-006).
     void run() { run_with(default_socket_path()); }
 
     // run() against an explicit socket path. JWT credentials are still read
-    // from VEYRON_JWT_TOKEN / VEYRON_JWT_SECRET when present.
+    // from VYN_JWT_TOKEN / VYN_JWT_SECRET when present.
     void run_with(const std::string& socket_path) {
         const std::string token = resolve_jwt_token("");
         const std::vector<uint8_t> secret = resolve_jwt_secret({});
@@ -160,4 +160,4 @@ protected:
     VeyronClient* client_ = nullptr;
 };
 
-} // namespace veyron
+} // namespace vynkor

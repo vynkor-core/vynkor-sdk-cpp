@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include "veyron/mac.hpp"
+#include "vynkor/mac.hpp"
 
-using namespace veyron;
+using namespace vynkor;
 
 TEST(DeriveSessionKey, Deterministic) {
     std::vector<uint8_t> secret = {'s','e','c','r','e','t'};
@@ -88,7 +88,7 @@ TEST(ComputeVerifyTag, WrongKeyRejected) {
 // ---------------------------------------------------------------------------
 // Framing MAC tests (Task 4)
 // ---------------------------------------------------------------------------
-#include "veyron/framing.hpp"
+#include "vynkor/framing.hpp"
 #include <arpa/inet.h>
 #include <cstring>
 #include <unistd.h>
@@ -102,32 +102,32 @@ static std::pair<int,int> make_pipe() {
 TEST(FramingMac, PackFrameMacSetsFlag) {
     std::vector<uint8_t> secret = {'s','e','c','r','e','t'};
     std::vector<uint8_t> nonce(16, 0x01);
-    auto key = veyron::derive_session_key(secret, nonce, "tgt");
+    auto key = vynkor::derive_session_key(secret, nonce, "tgt");
 
     std::vector<uint8_t> payload = {'h','e','l','l','o'};
-    auto frame = veyron::pack_frame_mac("tgt", payload, key);
+    auto frame = vynkor::pack_frame_mac("tgt", payload, key);
 
     ASSERT_EQ(frame.size(), size_t(44 + 5 + 32));
 
     uint16_t flags;
     std::memcpy(&flags, frame.data() + 2, 2);
     flags = ntohs(flags);
-    EXPECT_TRUE(flags & veyron::FLAG_MAC_PRESENT);
+    EXPECT_TRUE(flags & vynkor::FLAG_MAC_PRESENT);
 }
 
 TEST(FramingMac, ReadFrameFullVerifiesValidMac) {
     std::vector<uint8_t> secret = {'s','e','c','r','e','t'};
     std::vector<uint8_t> nonce(16, 0x01);
-    auto key = veyron::derive_session_key(secret, nonce, "tgt");
+    auto key = vynkor::derive_session_key(secret, nonce, "tgt");
 
     std::vector<uint8_t> payload = {'h','e','l','l','o'};
-    auto frame = veyron::pack_frame_mac("tgt", payload, key);
+    auto frame = vynkor::pack_frame_mac("tgt", payload, key);
 
     auto [read_fd, write_fd] = make_pipe();
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    auto result = veyron::read_frame_full(read_fd, &key);
+    auto result = vynkor::read_frame_full(read_fd, &key);
     ::close(read_fd);
 
     EXPECT_EQ(result.payload, payload);
@@ -137,33 +137,33 @@ TEST(FramingMac, ReadFrameFullVerifiesValidMac) {
 TEST(FramingMac, ReadFrameFullRejectsTamperedTag) {
     std::vector<uint8_t> secret = {'s','e','c','r','e','t'};
     std::vector<uint8_t> nonce(16, 0x01);
-    auto key = veyron::derive_session_key(secret, nonce, "tgt");
+    auto key = vynkor::derive_session_key(secret, nonce, "tgt");
 
     std::vector<uint8_t> payload = {'h','i'};
-    auto frame = veyron::pack_frame_mac("tgt", payload, key);
+    auto frame = vynkor::pack_frame_mac("tgt", payload, key);
     frame.back() ^= 0xFF;
 
     auto [read_fd, write_fd] = make_pipe();
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    EXPECT_THROW(veyron::read_frame_full(read_fd, &key), veyron::VeyronInternal);
+    EXPECT_THROW(vynkor::read_frame_full(read_fd, &key), vynkor::VeyronInternal);
     ::close(read_fd);
 }
 
 TEST(FramingMac, ReadFrameFullNoKeySkipsVerification) {
     std::vector<uint8_t> secret = {'s','e','c','r','e','t'};
     std::vector<uint8_t> nonce(16, 0x01);
-    auto key = veyron::derive_session_key(secret, nonce, "tgt");
+    auto key = vynkor::derive_session_key(secret, nonce, "tgt");
 
     std::vector<uint8_t> payload = {'n','o','k','e','y'};
-    auto frame = veyron::pack_frame_mac("tgt", payload, key);
+    auto frame = vynkor::pack_frame_mac("tgt", payload, key);
 
     auto [read_fd, write_fd] = make_pipe();
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    auto result = veyron::read_frame_full(read_fd, nullptr);
+    auto result = vynkor::read_frame_full(read_fd, nullptr);
     ::close(read_fd);
 
     EXPECT_EQ(result.payload, payload);
@@ -173,7 +173,7 @@ TEST(FramingMac, ReadFrameFullNoKeySkipsVerification) {
 // ---------------------------------------------------------------------------
 // Client MAC test (Task 5)
 // ---------------------------------------------------------------------------
-#include "veyron/client.hpp"
+#include "vynkor/client.hpp"
 
 TEST(VeyronClientMac, DeriveSessionKeyAfterMockAck) {
     std::vector<uint8_t> secret = {'j','w','t','s','e','c'};
@@ -186,15 +186,15 @@ TEST(VeyronClientMac, DeriveSessionKeyAfterMockAck) {
     std::string serialized;
     ack_env.SerializeToString(&serialized);
 
-    auto frame = veyron::pack_frame("plugin-test", serialized);
+    auto frame = vynkor::pack_frame("plugin-test", serialized);
 
     auto [read_fd, write_fd] = make_pipe();
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    auto expected_key = veyron::derive_session_key(secret, nonce, "plugin-test");
+    auto expected_key = vynkor::derive_session_key(secret, nonce, "plugin-test");
 
-    auto result = veyron::read_frame_full(read_fd, nullptr);
+    auto result = vynkor::read_frame_full(read_fd, nullptr);
     ::close(read_fd);
 
     Envelope parsed;
@@ -206,7 +206,7 @@ TEST(VeyronClientMac, DeriveSessionKeyAfterMockAck) {
 
     auto raw_nonce = parsed_ack.session_nonce();
     std::vector<uint8_t> parsed_nonce(raw_nonce.begin(), raw_nonce.end());
-    auto derived = veyron::derive_session_key(secret, parsed_nonce, "plugin-test");
+    auto derived = vynkor::derive_session_key(secret, parsed_nonce, "plugin-test");
     EXPECT_EQ(derived, expected_key);
 }
 
@@ -228,28 +228,28 @@ static std::vector<uint8_t> pack_compressed_frame(const std::string& target,
     if (ZSTD_isError(csize)) throw std::runtime_error("zstd compress failed");
     compressed.resize(csize);
 
-    uint16_t flags = veyron::FLAG_COMPRESSED;
-    if (session_key != nullptr) flags |= veyron::FLAG_MAC_PRESENT;
+    uint16_t flags = vynkor::FLAG_COMPRESSED;
+    if (session_key != nullptr) flags |= vynkor::FLAG_MAC_PRESENT;
 
     uint8_t target_bytes[32] = {};
     std::memcpy(target_bytes, target.data(), std::min(target.size(), size_t{32}));
 
     uint8_t wire_header[44] = {};
-    uint16_t magic_be = htons(veyron::FRAME_MAGIC);
+    uint16_t magic_be = htons(vynkor::FRAME_MAGIC);
     std::memcpy(wire_header + 0, &magic_be, 2);
     uint16_t flags_be = htons(flags);
     std::memcpy(wire_header + 2, &flags_be, 2);
     uint32_t len_be = htonl(static_cast<uint32_t>(compressed.size()));
     std::memcpy(wire_header + 4, &len_be, 4);
     std::memcpy(wire_header + 8, target_bytes, 32);
-    uint32_t wire_crc_be = htonl(veyron::veyron_crc32(compressed.data(), compressed.size()));
+    uint32_t wire_crc_be = htonl(vynkor::vynkor_crc32(compressed.data(), compressed.size()));
     std::memcpy(wire_header + 40, &wire_crc_be, 4);
 
     std::vector<uint8_t> frame(wire_header, wire_header + 44);
     frame.insert(frame.end(), compressed.begin(), compressed.end());
 
     if (session_key != nullptr) {
-        uint16_t plain_flags = flags & static_cast<uint16_t>(~veyron::FLAG_COMPRESSED);
+        uint16_t plain_flags = flags & static_cast<uint16_t>(~vynkor::FLAG_COMPRESSED);
         uint8_t plain_header[44] = {};
         std::memcpy(plain_header + 0, &magic_be, 2);
         uint16_t plain_flags_be = htons(plain_flags);
@@ -257,10 +257,10 @@ static std::vector<uint8_t> pack_compressed_frame(const std::string& target,
         uint32_t plain_len_be = htonl(static_cast<uint32_t>(plain.size()));
         std::memcpy(plain_header + 4, &plain_len_be, 4);
         std::memcpy(plain_header + 8, target_bytes, 32);
-        uint32_t plain_crc_be = htonl(veyron::veyron_crc32(plain.data(), plain.size()));
+        uint32_t plain_crc_be = htonl(vynkor::vynkor_crc32(plain.data(), plain.size()));
         std::memcpy(plain_header + 40, &plain_crc_be, 4);
 
-        auto tag = veyron::compute_tag(*session_key, plain_header, 44, plain.data(), plain.size());
+        auto tag = vynkor::compute_tag(*session_key, plain_header, 44, plain.data(), plain.size());
         frame.insert(frame.end(), tag.begin(), tag.end());
     }
 
@@ -277,17 +277,17 @@ TEST(FramingCompressed, DecompressesLargePayload) {
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    auto result = veyron::read_frame_full(read_fd, nullptr);
+    auto result = vynkor::read_frame_full(read_fd, nullptr);
     ::close(read_fd);
 
     EXPECT_EQ(result.payload, plain);
-    EXPECT_FALSE(result.flags & veyron::FLAG_COMPRESSED);
+    EXPECT_FALSE(result.flags & vynkor::FLAG_COMPRESSED);
 }
 
 TEST(FramingCompressed, DecompressesAndVerifiesMac) {
     std::vector<uint8_t> secret = {'s','e','c','r','e','t'};
     std::vector<uint8_t> nonce(16, 0x03);
-    auto key = veyron::derive_session_key(secret, nonce, "tgt");
+    auto key = vynkor::derive_session_key(secret, nonce, "tgt");
 
     std::vector<uint8_t> plain(100'000, 0x7A);
     auto frame = pack_compressed_frame("tgt", plain, &key);
@@ -296,7 +296,7 @@ TEST(FramingCompressed, DecompressesAndVerifiesMac) {
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    auto result = veyron::read_frame_full(read_fd, &key);
+    auto result = vynkor::read_frame_full(read_fd, &key);
     ::close(read_fd);
 
     EXPECT_EQ(result.payload, plain);
@@ -306,8 +306,8 @@ TEST(FramingCompressed, DecompressesAndVerifiesMac) {
 TEST(FramingCompressed, RejectsBadMacOnCompressedFrame) {
     std::vector<uint8_t> secret = {'s','e','c','r','e','t'};
     std::vector<uint8_t> nonce(16, 0x04);
-    auto key = veyron::derive_session_key(secret, nonce, "tgt");
-    auto wrong_key = veyron::derive_session_key(secret, nonce, "other");
+    auto key = vynkor::derive_session_key(secret, nonce, "tgt");
+    auto wrong_key = vynkor::derive_session_key(secret, nonce, "other");
 
     std::vector<uint8_t> plain(100'000, 0x5B);
     auto frame = pack_compressed_frame("tgt", plain, &key);
@@ -316,7 +316,7 @@ TEST(FramingCompressed, RejectsBadMacOnCompressedFrame) {
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    EXPECT_THROW(veyron::read_frame_full(read_fd, &wrong_key), veyron::VeyronInternal);
+    EXPECT_THROW(vynkor::read_frame_full(read_fd, &wrong_key), vynkor::VeyronInternal);
     ::close(read_fd);
 }
 

@@ -6,12 +6,12 @@
 #include <string>
 #include <vector>
 
-namespace veyron {
+namespace vynkor {
 
 static constexpr uint16_t FLAG_MAC_PRESENT = 0x0001;
 static constexpr size_t   MAC_TAG_LEN      = 32;
 
-// HKDF-SHA256(ikm=secret, salt=nonce, info="veyron-frame-mac-v1|{plugin_id}") → 32-byte key.
+// HKDF-SHA256(ikm=secret, salt=nonce, info="vynkor-frame-mac-v1|{plugin_id}") → 32-byte key.
 // Mirrors Rust auth::frame_mac::derive_session_key.
 std::array<uint8_t, 32> derive_session_key(
     const std::vector<uint8_t>& secret,
@@ -31,4 +31,4 @@ bool verify_tag(
     const uint8_t* payload, size_t payload_len,
     const uint8_t* tag, size_t tag_len);
 
-} // namespace veyron
+} // namespace vynkor

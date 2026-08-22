@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 #include <sys/un.h>
 
-#include "veyron/client.hpp"
+#include "vynkor/client.hpp"
 
-using namespace veyron;
+using namespace vynkor;
 
 TEST(VeyronClientConnect, RejectsOverlongSocketPath) {
     std::string too_long(sizeof(sockaddr_un{}.sun_path), 'x');

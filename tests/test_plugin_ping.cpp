@@ -14,11 +14,11 @@
 #include <thread>
 #include <vector>
 
-#include "veyron/framing.hpp"
-#include "veyron/plugin.hpp"
-#include "veyron_protocol.pb.h"
+#include "vynkor/framing.hpp"
+#include "vynkor/plugin.hpp"
+#include "vynkor_protocol.pb.h"
 
-using namespace veyron;
+using namespace vynkor;
 
 namespace {
 
@@ -67,7 +67,7 @@ Envelope recv_envelope(int fd) {
 
 TEST(PluginRunLoop, AnswersWatchdogPingWithPong) {
     std::string sock_path =
-        "/tmp/veyron-test-ping-" + std::to_string(::getpid()) + ".sock";
+        "/tmp/vynkor-test-ping-" + std::to_string(::getpid()) + ".sock";
     ::unlink(sock_path.c_str());
 
     int listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -126,7 +126,7 @@ TEST(PluginRunLoop, AnswersWatchdogPingWithPong) {
 // plugin was silently lost before this fix.
 TEST(PluginRunLoop, DispatchesEventToOnEventAndSendsAck) {
     std::string sock_path =
-        "/tmp/veyron-test-event-" + std::to_string(::getpid()) + ".sock";
+        "/tmp/vynkor-test-event-" + std::to_string(::getpid()) + ".sock";
     ::unlink(sock_path.c_str());
 
     int listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
