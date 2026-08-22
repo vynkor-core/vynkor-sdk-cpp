@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(veyron_sdk
     VERSION 0.1.1
     DESCRIPTION "C++ SDK for writing Veyron plugins"
-    HOMEPAGE_URL "https://github.com/veyron-core/veyron"
+    HOMEPAGE_URL "https://github.com/veyron-core/vynkor"
     LANGUAGES CXX
 )
 
