@@ -3,13 +3,13 @@
 // the happy paths and MAC tamper cases. This file targets malformed headers
 // and truncated/oversized wire input that a hostile or buggy peer could send.
 #include <gtest/gtest.h>
-#include "veyron/framing.hpp"
+#include "vynkor/framing.hpp"
 
 #include <arpa/inet.h>
 #include <cstring>
 #include <unistd.h>
 
-using namespace veyron;
+using namespace vynkor;
 
 static std::pair<int,int> make_pipe() {
     int fds[2];
@@ -118,7 +118,7 @@ TEST(FramingMalformed, RejectsGarbageCompressedPayload) {
     std::memcpy(header + 2, &flags_be, 2);
     uint32_t len_be = htonl(static_cast<uint32_t>(garbage.size()));
     std::memcpy(header + 4, &len_be, 4);
-    uint32_t crc_be = htonl(veyron_crc32(garbage.data(), garbage.size()));
+    uint32_t crc_be = htonl(vynkor_crc32(garbage.data(), garbage.size()));
     std::memcpy(header + 40, &crc_be, 4);
 
     std::vector<uint8_t> frame(header, header + FRAME_HEADER_SIZE);

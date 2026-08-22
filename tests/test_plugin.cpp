@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 #include <cstdlib>
-#include "veyron/plugin.hpp"
+#include "vynkor/plugin.hpp"
 
-using namespace veyron;
+using namespace vynkor;
 
 namespace {
 class NoopPlugin : public Plugin {
@@ -35,5 +35,5 @@ TEST(PluginDefaults, IdComesFromOverride) {
 
 TEST(PluginDefaults, NeverDefaultsSocketToSharedTmp) {
     unsetenv("XDG_RUNTIME_DIR");
-    EXPECT_NE(default_socket_path(), "/tmp/veyron.sock");
+    EXPECT_NE(default_socket_path(), "/tmp/vyn.sock");
 }

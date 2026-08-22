@@ -1,4 +1,4 @@
-#include "veyron/framing.hpp"
+#include "vynkor/framing.hpp"
 
 #include <arpa/inet.h>
 #include <poll.h>
@@ -14,9 +14,9 @@
 #include <string>
 #include <vector>
 
-#include "veyron/error.hpp"
+#include "vynkor/error.hpp"
 
-namespace veyron {
+namespace vynkor {
 
 // ---------------------------------------------------------------------------
 // CRC-32/ISO-HDLC
@@ -32,7 +32,7 @@ static std::array<uint32_t, 256> build_crc32_table() {
     return t;
 }
 
-uint32_t veyron_crc32(const uint8_t* data, size_t len) {
+uint32_t vynkor_crc32(const uint8_t* data, size_t len) {
     static const auto table = build_crc32_table();
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; i < len; ++i)
@@ -83,7 +83,7 @@ std::vector<uint8_t> pack_frame(const std::string& target,
     if (payload.size() > MAX_PAYLOAD_SIZE)
         throw VeyronPayloadTooLarge(payload.size());
 
-    uint32_t crc = veyron_crc32(payload.data(), payload.size());
+    uint32_t crc = vynkor_crc32(payload.data(), payload.size());
 
     uint8_t header[FRAME_HEADER_SIZE] = {};
     const uint16_t magic_be = htons(FRAME_MAGIC);
@@ -120,7 +120,7 @@ std::vector<uint8_t> pack_frame_mac(const std::string& target,
     if (payload.size() > MAX_PAYLOAD_SIZE)
         throw VeyronPayloadTooLarge(payload.size());
 
-    uint32_t crc = veyron_crc32(payload.data(), payload.size());
+    uint32_t crc = vynkor_crc32(payload.data(), payload.size());
 
     uint8_t header[FRAME_HEADER_SIZE] = {};
     const uint16_t magic_be = htons(FRAME_MAGIC);
@@ -219,7 +219,7 @@ static void build_header(uint8_t out[FRAME_HEADER_SIZE], uint16_t flags,
     const uint32_t len_be = htonl(static_cast<uint32_t>(payload.size()));
     std::memcpy(out + 4, &len_be, 4);
     std::memcpy(out + 8, target, 32);
-    const uint32_t crc_be = htonl(veyron_crc32(payload.data(), payload.size()));
+    const uint32_t crc_be = htonl(vynkor_crc32(payload.data(), payload.size()));
     std::memcpy(out + 40, &crc_be, 4);
 }
 
@@ -359,7 +359,7 @@ FrameResult read_frame_full_with_timeout(int fd, const std::array<uint8_t, 32>* 
         recv_exact_deadline(fd, payload.data(), length, deadline);
 
     // CRC is over the wire bytes (possibly compressed); verify before decompressing.
-    if (veyron_crc32(payload.data(), payload.size()) != expected_crc)
+    if (vynkor_crc32(payload.data(), payload.size()) != expected_crc)
         throw VeyronFrameCrcMismatch();
 
     // Normalize the in-memory invariant: payload is always plaintext, and the
@@ -402,4 +402,4 @@ std::vector<uint8_t> read_frame(int fd) {
     return read_frame_full(fd, nullptr).payload;
 }
 
-} // namespace veyron
+} // namespace vynkor

@@ -4,15 +4,15 @@
 // streaming, and publish-from-plugin), and SessionClose dispatch.
 //
 // Run (with a kernel listening on the default socket):
-//     VEYRON_JWT_TOKEN=<token> ./echo_plugin
+//     VYN_JWT_TOKEN=<token> ./echo_plugin
 
 #include <iostream>
 #include <map>
 #include <string>
 
-#include "veyron/plugin.hpp"
+#include "vynkor/plugin.hpp"
 
-using namespace veyron;
+using namespace vynkor;
 
 namespace {
 

@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package veyron;
+package vynkor;
 
 // v 1.6  (D-01: device identity + versioning + user_id + tool schema —
 //         PluginRegister gains device/os/version/capabilities/protocol_version/

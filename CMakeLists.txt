@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(veyron_sdk
-    VERSION 0.1.1
+project(vynkor_sdk
+    VERSION 0.0.1
     DESCRIPTION "C++ SDK for writing Veyron plugins"
     HOMEPAGE_URL "https://github.com/veyron-core/vynkor"
     LANGUAGES CXX
@@ -23,29 +23,29 @@ else()
     set(ZSTD_TARGET zstd::libzstd_static)
 endif()
 
-# Generate C++ bindings from the vendored proto (sourced from veyron-wire's
-# wire/proto/veyron_protocol.proto — re-copy by hand when the protocol changes)
-set(PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/proto/veyron_protocol.proto)
+# Generate C++ bindings from the vendored proto (sourced from vynkor-wire's
+# wire/proto/vynkor_protocol.proto — re-copy by hand when the protocol changes)
+set(PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/proto/vynkor_protocol.proto)
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ${PROTO_FILE})
 
-add_library(veyron_sdk_cpp STATIC
+add_library(vynkor_sdk_cpp STATIC
     src/client.cpp
     src/framing.cpp
     src/mac.cpp
     src/env.cpp
-    include/veyron/client.hpp
-    include/veyron/error.hpp
-    include/veyron/framing.hpp
-    include/veyron/mac.hpp
-    include/veyron/plugin.hpp
-    include/veyron/env.hpp
+    include/vynkor/client.hpp
+    include/vynkor/error.hpp
+    include/vynkor/framing.hpp
+    include/vynkor/mac.hpp
+    include/vynkor/plugin.hpp
+    include/vynkor/env.hpp
     ${PROTO_SRCS}
     ${PROTO_HDRS}
 )
 
-add_library(veyron::sdk ALIAS veyron_sdk_cpp)
+add_library(vynkor::sdk ALIAS vynkor_sdk_cpp)
 
-target_include_directories(veyron_sdk_cpp
+target_include_directories(vynkor_sdk_cpp
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
@@ -53,11 +53,14 @@ target_include_directories(veyron_sdk_cpp
     $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(veyron_sdk_cpp
+target_link_libraries(vynkor_sdk_cpp
     PUBLIC
     protobuf::libprotobuf
     absl::base
     absl::strings
+    # protobuf-generated pb.cc references CHECK_OP internals; FindProtobuf's
+    # module-mode imported target does not propagate abseil log components
+    absl::log_internal_check_op
     OpenSSL::Crypto
     ${ZSTD_TARGET}
     Threads::Threads
@@ -67,17 +70,17 @@ target_link_libraries(veyron_sdk_cpp
 include(CTest)
 find_package(GTest REQUIRED)
 
-add_executable(veyron_sdk_tests tests/test_mac.cpp tests/test_env.cpp tests/test_plugin.cpp tests/test_plugin_ping.cpp tests/test_framing.cpp tests/test_framing_timeout.cpp tests/test_client.cpp tests/test_fragmentation.cpp tests/test_publish_event.cpp tests/test_send_action.cpp tests/test_session_close.cpp)
-target_link_libraries(veyron_sdk_tests
+add_executable(vynkor_sdk_tests tests/test_mac.cpp tests/test_env.cpp tests/test_plugin.cpp tests/test_plugin_ping.cpp tests/test_framing.cpp tests/test_framing_timeout.cpp tests/test_client.cpp tests/test_fragmentation.cpp tests/test_publish_event.cpp tests/test_send_action.cpp tests/test_session_close.cpp)
+target_link_libraries(vynkor_sdk_tests
     PRIVATE
-    veyron_sdk_cpp
+    vynkor_sdk_cpp
     GTest::GTest
 )
-add_test(NAME veyron_sdk_tests COMMAND veyron_sdk_tests)
+add_test(NAME vynkor_sdk_tests COMMAND vynkor_sdk_tests)
 
 # ── Fuzzing (T-14) ─────────────────────────────────────────────────────────
 # libFuzzer requires Clang; off by default so a normal GCC/Clang build (and
-# the veyron_sdk_tests target above) is unaffected.
+# the vynkor_sdk_tests target above) is unaffected.
 option(VEYRON_BUILD_FUZZERS "Build libFuzzer harnesses (requires Clang)" OFF)
 if(VEYRON_BUILD_FUZZERS)
     if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -92,15 +95,15 @@ endif()
 
 # ── Examples ───────────────────────────────────────────────────────────────
 add_executable(echo_plugin examples/echo_plugin.cpp)
-target_link_libraries(echo_plugin PRIVATE veyron_sdk_cpp)
+target_link_libraries(echo_plugin PRIVATE vynkor_sdk_cpp)
 
 # ── Install ────────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 install(
-    TARGETS veyron_sdk_cpp
-    EXPORT veyron-sdk-targets
+    TARGETS vynkor_sdk_cpp
+    EXPORT vynkor-sdk-targets
     ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
@@ -112,19 +115,19 @@ install(
 )
 
 install(
-    EXPORT veyron-sdk-targets
-    FILE veyron-sdk-config.cmake
-    NAMESPACE veyron::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veyron-sdk
+    EXPORT vynkor-sdk-targets
+    FILE vynkor-sdk-config.cmake
+    NAMESPACE vynkor::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/vynkor-sdk
 )
 
 write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/veyron-sdk-config-version.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/vynkor-sdk-config-version.cmake
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion
 )
 
 install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/veyron-sdk-config-version.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/veyron-sdk
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/vynkor-sdk-config-version.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/vynkor-sdk
 )

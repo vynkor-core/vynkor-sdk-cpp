@@ -1,4 +1,4 @@
-#include "veyron/client.hpp"
+#include "vynkor/client.hpp"
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -9,9 +9,9 @@
 #include <cerrno>
 #include <cstring>
 
-#include "veyron/env.hpp"
+#include "vynkor/env.hpp"
 
-namespace veyron {
+namespace vynkor {
 
 namespace {
 // Module-level counter, mirroring the rust SDK's free-function
@@ -500,4 +500,4 @@ void VeyronClient::write_all(const std::vector<uint8_t>& frame) {
     }
 }
 
-} // namespace veyron
+} // namespace vynkor

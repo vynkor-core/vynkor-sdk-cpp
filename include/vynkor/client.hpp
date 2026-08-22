@@ -9,12 +9,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include "veyron/error.hpp"
-#include "veyron/framing.hpp"
-#include "veyron/mac.hpp"
-#include "veyron_protocol.pb.h"
+#include "vynkor/error.hpp"
+#include "vynkor/framing.hpp"
+#include "vynkor/mac.hpp"
+#include "vynkor_protocol.pb.h"
 
-namespace veyron {
+namespace vynkor {
 
 // Mirrors the kernel's inbound reassembly bounds (see src/ipc/connection.rs)
 // and the rust/python SDKs' client-side reassembly (T-18).
@@ -46,7 +46,7 @@ public:
     static VeyronClient connect(const std::string& socket_path);
     static VeyronClient connect_with_secret(const std::string& socket_path,
                                             const std::vector<uint8_t>& secret);
-    // Uses VEYRON_SOCKET_PATH (or the per-user default) and VEYRON_JWT_SECRET
+    // Uses VYN_SOCKET_PATH (or the per-user default) and VYN_JWT_SECRET
     // (enables frame MACs when set).
     static VeyronClient connect_from_env();
 
@@ -209,4 +209,4 @@ private:
                                const std::function<bool(const Envelope&)>& is_terminal);
 };
 
-} // namespace veyron
+} // namespace vynkor

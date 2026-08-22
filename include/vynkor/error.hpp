@@ -4,10 +4,10 @@
 #include <stdexcept>
 #include <string>
 
-namespace veyron {
+namespace vynkor {
 
 // Typed exception hierarchy mirroring the Rust SDK's `WireError` enum
-// (veyron-wire/src/error.rs) variant-for-variant. Every subclass derives from
+// (vynkor-wire/src/error.rs) variant-for-variant. Every subclass derives from
 // std::runtime_error so existing `catch (const std::runtime_error&)` and
 // `catch (...)` sites keep working while new code can discriminate on the
 // exact failure mode.
@@ -76,4 +76,4 @@ public:
         : VeyronError("internal error: " + message) {}
 };
 
-} // namespace veyron
+} // namespace vynkor

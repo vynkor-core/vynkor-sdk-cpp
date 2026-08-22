@@ -1,4 +1,4 @@
-// libFuzzer harness for veyron::read_frame / read_frame_full (T-14).
+// libFuzzer harness for vynkor::read_frame / read_frame_full (T-14).
 //
 // Build: cmake -DCMAKE_CXX_COMPILER=clang++ -DVEYRON_BUILD_FUZZERS=ON ..
 //        make fuzz_framing
@@ -7,7 +7,7 @@
 // Bytes are written to a memfd (not a pipe) so an oversized input can never
 // deadlock the harness on a full pipe buffer before the parser gets to
 // reject it via the length-field check.
-#include "veyron/framing.hpp"
+#include "vynkor/framing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 static int make_memfd_with(const uint8_t* data, size_t size) {
-    int fd = memfd_create("veyron-fuzz-frame", 0);
+    int fd = memfd_create("vynkor-fuzz-frame", 0);
     if (fd < 0) throw std::runtime_error("memfd_create failed");
     if (size > 0) {
         ssize_t written = ::write(fd, data, size);
@@ -33,7 +33,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     {
         int fd = make_memfd_with(data, size);
         try {
-            (void)veyron::read_frame(fd);
+            (void)vynkor::read_frame(fd);
         } catch (const std::exception&) {
             // Rejecting malformed input is the expected, correct behavior.
         }
@@ -50,7 +50,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
             return k;
         }();
         try {
-            (void)veyron::read_frame_full(fd, &key);
+            (void)vynkor::read_frame_full(fd, &key);
         } catch (const std::exception&) {
         }
         ::close(fd);
