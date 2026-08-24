@@ -58,13 +58,17 @@ target_link_libraries(vynkor_sdk_cpp
     protobuf::libprotobuf
     absl::base
     absl::strings
-    # protobuf-generated pb.cc references CHECK_OP internals; FindProtobuf's
-    # module-mode imported target does not propagate abseil log components
-    absl::log_internal_check_op
     OpenSSL::Crypto
     ${ZSTD_TARGET}
     Threads::Threads
 )
+
+# protobuf-generated pb.cc references CHECK_OP internals only when built
+# against abseil-backed protobuf (v22+); older system protobuf (e.g. Ubuntu
+# 24.04's 3.21) neither needs nor ships that target — link it when present
+if(TARGET absl::log_internal_check_op)
+    target_link_libraries(vynkor_sdk_cpp PUBLIC absl::log_internal_check_op)
+endif()
 
 # ── Tests ──────────────────────────────────────────────────────────────────
 include(CTest)
