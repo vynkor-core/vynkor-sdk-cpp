@@ -13,14 +13,20 @@ find_package(Threads REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(absl REQUIRED)
-find_package(zstd REQUIRED)
 
-# zstd's CMake config (both upstream and Conan) exports either
-# zstd::libzstd_shared or zstd::libzstd_static depending on how it was built.
+# zstd: prefer the upstream/Conan CMake config (exports zstd::libzstd_shared
+# or zstd::libzstd_static depending on how it was built); Debian/Ubuntu's
+# libzstd-dev ships headers and libs but no CMake config, so fall back to
+# pkg-config for those.
+find_package(zstd QUIET CONFIG)
 if(TARGET zstd::libzstd_shared)
     set(ZSTD_TARGET zstd::libzstd_shared)
-else()
+elseif(TARGET zstd::libzstd_static)
     set(ZSTD_TARGET zstd::libzstd_static)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ZSTD_PC REQUIRED IMPORTED_TARGET libzstd)
+    set(ZSTD_TARGET PkgConfig::ZSTD_PC)
 endif()
 
 # Generate C++ bindings from the vendored proto (sourced from vynkor-wire's
