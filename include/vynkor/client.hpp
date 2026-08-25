@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -12,6 +13,7 @@
 #include "vynkor/error.hpp"
 #include "vynkor/framing.hpp"
 #include "vynkor/mac.hpp"
+#include "vynkor/ws.hpp"
 #include "vynkor_protocol.pb.h"
 
 namespace vynkor {
@@ -24,31 +26,43 @@ static constexpr std::chrono::seconds REASSEMBLY_TIMEOUT{30};
 // Request timeout when a caller passes timeout_ms == 0 (kernel default, 30 s).
 static constexpr std::chrono::milliseconds DEFAULT_REQUEST_TIMEOUT{30000};
 
-class VeyronClient {
+class VynkorClient {
 public:
     // secret: shared JWT secret for MAC key derivation.
     // Pass empty vector (default) to skip MAC — only valid with allow_no_auth:true kernels.
-    explicit VeyronClient(std::string socket_path,
+    explicit VynkorClient(std::string socket_path,
                           std::vector<uint8_t> secret = {});
     // Adopt an already-connected fd directly (tests, or a socket established
-    // outside connect()). VeyronClient owns fd and closes it on destruction.
-    explicit VeyronClient(int fd, std::vector<uint8_t> secret = {});
-    ~VeyronClient();
+    // outside connect()). VynkorClient owns fd and closes it on destruction.
+    explicit VynkorClient(int fd, std::vector<uint8_t> secret = {});
+    ~VynkorClient();
 
-    // Move-only: owns the fd. The moved-from client no longer closes it.
-    VeyronClient(VeyronClient&& other) noexcept;
-    VeyronClient& operator=(VeyronClient&& other) noexcept;
-    VeyronClient(const VeyronClient&) = delete;
-    VeyronClient& operator=(const VeyronClient&) = delete;
+    // Move-only: owns the connection. The moved-from client no longer closes it.
+    VynkorClient(VynkorClient&& other) noexcept;
+    VynkorClient& operator=(VynkorClient&& other) noexcept;
+    VynkorClient(const VynkorClient&) = delete;
+    VynkorClient& operator=(const VynkorClient&) = delete;
 
-    // Static factories returning a connected client (Rust parity: VeyronClient::connect /
+    // Static factories returning a connected client (Rust parity: VynkorClient::connect /
     // connect_with_secret / connect_from_env).
-    static VeyronClient connect(const std::string& socket_path);
-    static VeyronClient connect_with_secret(const std::string& socket_path,
+    static VynkorClient connect(const std::string& socket_path);
+    static VynkorClient connect_with_secret(const std::string& socket_path,
                                             const std::vector<uint8_t>& secret);
     // Uses VYN_SOCKET_PATH (or the per-user default) and VYN_JWT_SECRET
     // (enables frame MACs when set).
-    static VeyronClient connect_from_env();
+    static VynkorClient connect_from_env();
+
+    // Connect to the kernel's WebSocket gateway (D-05): `ws://host:port/ws`
+    // or wss://. The client always offers the `vynkor` subprotocol; a
+    // non-empty jwt_token is appended as `Sec-WebSocket-Protocol: vynkor,
+    // <jwt>` — the gateway's only token channel (never put tokens in the
+    // URL; they leak into access logs). Pass the same token to
+    // register_full(). An empty `secret` disables frame MACs. Gateway limits
+    // apply on this transport (R5-03): outbound frames are never compressed
+    // and send_fragmented() is rejected; FLAG_RAW_BINARY passes unchanged.
+    static VynkorClient connect_ws(const std::string& url,
+                                   const std::string& jwt_token,
+                                   const std::vector<uint8_t>& secret = {});
 
     // Member connect (the ctor(socket_path, secret) + connect() pattern).
     void connect();
@@ -56,6 +70,11 @@ public:
 
     // True once a secured registration has derived the per-connection MAC key.
     bool is_secured() const { return session_key_.has_value(); }
+
+    // Underlying UDS file descriptor — used by run_concurrent_loop to poll
+    // for readability while owning the client exclusively. Only valid on the
+    // UDS transport; throws VynkorInternal over WebSocket.
+    int native_handle() const;
 
     // ── Registration ─────────────────────────────────────────────────
     // Rust's `register` is a reserved C++ keyword, so the tokenless overload
@@ -82,15 +101,17 @@ public:
     void send_raw(const std::string& target, const std::vector<uint8_t>& payload);
     // Send a raw payload with explicit extra flags ORed into the frame header
     // (e.g. FLAG_RAW_BINARY). MAC and outbound compression are applied
-    // automatically by the framing layer.
+    // automatically by the framing layer (compression on UDS only).
     void send_raw_with_flags(const std::string& target,
                              uint16_t extra_flags,
                              const std::vector<uint8_t>& payload);
 
     // Split `payload` into FLAG_FRAGMENTED frames of at most `chunk_size` data
     // bytes each and send them on a fresh stream id. The receiving side (kernel
-    // or another VeyronClient) reassembles them into one logical frame. Bounds
+    // or another VynkorClient) reassembles them into one logical frame. Bounds
     // mirror the kernel: total payload <= 1 MiB, <= 65535 fragments.
+    // UDS only — the WS gateway rejects fragmented inbound frames (R5-03),
+    // so this throws VynkorInternal on a WebSocket transport.
     void send_fragmented(const std::string& target,
                          const std::vector<uint8_t>& payload,
                          size_t chunk_size);
@@ -101,7 +122,7 @@ public:
     FrameResult recv_frame();
     // Receive and decode the next Envelope. Errors on raw-binary frames.
     Envelope recv();
-    // recv() bounded by `timeout`; throws VeyronTimeout if nothing arrives.
+    // recv() bounded by `timeout`; throws VynkorTimeout if nothing arrives.
     Envelope recv_timeout(std::chrono::milliseconds timeout);
 
     // ── Events ───────────────────────────────────────────────────────
@@ -114,15 +135,15 @@ public:
     // Publish an event to the kernel event bus. Requires PERMISSION_EVENT_PUBLISH.
     // timeout_ms == 0 uses the kernel default of 30s. The returned EventPublishAck
     // is returned as-is regardless of its status field — callers inspect
-    // ack.status() themselves. Throws VeyronInternal on a kernel Error envelope,
-    // VeyronTimeout on timeout.
+    // ack.status() themselves. Throws VynkorInternal on a kernel Error envelope,
+    // VynkorTimeout on timeout.
     EventPublishAck publish_event(const std::string& event_type,
                                   const std::vector<uint8_t>& payload_json,
                                   uint32_t timeout_ms = 0);
 
     // Ask the kernel to perform an action and await its ActionResponse.
-    // timeout_ms == 0 uses the kernel default of 30s. Throws VeyronInternal on a
-    // kernel Error envelope or ActionStreamAbort for this action_id, VeyronTimeout
+    // timeout_ms == 0 uses the kernel default of 30s. Throws VynkorInternal on a
+    // kernel Error envelope or ActionStreamAbort for this action_id, VynkorTimeout
     // on timeout.
     ActionResponse send_action(const std::string& action,
                                const std::vector<uint8_t>& params_json,
@@ -162,6 +183,7 @@ public:
 private:
     std::string                            socket_path_;
     int                                    fd_ = -1;
+    std::unique_ptr<WsConnection>          ws_;
     std::vector<uint8_t>                   secret_;
     std::optional<std::array<uint8_t,32>>  session_key_;
 
@@ -196,7 +218,11 @@ private:
     // in the rust/python SDKs).
     std::optional<FrameResult> absorb_fragment(FrameResult frame);
 
+    // One raw wire frame off the active transport (UDS socket or WS message),
+    // MAC-verified against the session key when secured.
+    FrameResult read_transport_frame(std::chrono::steady_clock::time_point deadline);
     void write_all(const std::vector<uint8_t>& frame);
+    void write_all_ws(const std::vector<uint8_t>& message);
 
     // Like recv_frame(), but bounds the total wait (including the first byte)
     // by deadline instead of the per-frame idle-forever default.

@@ -1,4 +1,4 @@
-// P7-01: VeyronClient::publish_event — mirrors sdk/rust/src/client.rs's
+// P7-01: VynkorClient::publish_event — mirrors sdk/rust/src/client.rs's
 // publish_event tests (OK/PERMISSION_DENY ack passthrough, kernel error
 // raises, deadline timeout raises, unrelated traffic discarded).
 
@@ -41,7 +41,7 @@ void send_kernel_side(int fd, const Envelope& env) {
 
 TEST(PublishEvent, OkAckReturned) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         Envelope req = recv_kernel_side(b);
@@ -65,7 +65,7 @@ TEST(PublishEvent, OkAckReturned) {
 
 TEST(PublishEvent, PermissionDenyAckReturnedNotRaised) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         recv_kernel_side(b);
@@ -85,7 +85,7 @@ TEST(PublishEvent, PermissionDenyAckReturnedNotRaised) {
 
 TEST(PublishEvent, KernelErrorEnvelopeRaises) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         recv_kernel_side(b);
@@ -97,13 +97,13 @@ TEST(PublishEvent, KernelErrorEnvelopeRaises) {
     });
 
     std::vector<uint8_t> payload{'{', '}'};
-    EXPECT_THROW(client.publish_event("my.event", payload, 1000), VeyronInternal);
+    EXPECT_THROW(client.publish_event("my.event", payload, 1000), VynkorInternal);
     kernel.join();
 }
 
 TEST(PublishEvent, TimesOutWhenNoResponse) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         recv_kernel_side(b);
@@ -113,7 +113,7 @@ TEST(PublishEvent, TimesOutWhenNoResponse) {
 
     std::vector<uint8_t> payload{'{', '}'};
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(client.publish_event("my.event", payload, 150), VeyronTimeout);
+    EXPECT_THROW(client.publish_event("my.event", payload, 150), VynkorTimeout);
     const auto elapsed = std::chrono::steady_clock::now() - start;
     EXPECT_LT(elapsed, std::chrono::seconds(2));
 
@@ -123,7 +123,7 @@ TEST(PublishEvent, TimesOutWhenNoResponse) {
 
 TEST(PublishEvent, UnrelatedEnvelopeDiscardedThenAckReturned) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         recv_kernel_side(b);

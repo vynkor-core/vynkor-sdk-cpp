@@ -147,7 +147,7 @@ TEST(FramingMac, ReadFrameFullRejectsTamperedTag) {
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    EXPECT_THROW(vynkor::read_frame_full(read_fd, &key), vynkor::VeyronInternal);
+    EXPECT_THROW(vynkor::read_frame_full(read_fd, &key), vynkor::VynkorInternal);
     ::close(read_fd);
 }
 
@@ -175,7 +175,7 @@ TEST(FramingMac, ReadFrameFullNoKeySkipsVerification) {
 // ---------------------------------------------------------------------------
 #include "vynkor/client.hpp"
 
-TEST(VeyronClientMac, DeriveSessionKeyAfterMockAck) {
+TEST(VynkorClientMac, DeriveSessionKeyAfterMockAck) {
     std::vector<uint8_t> secret = {'j','w','t','s','e','c'};
     std::vector<uint8_t> nonce(16, 0xBE);
 
@@ -316,7 +316,7 @@ TEST(FramingCompressed, RejectsBadMacOnCompressedFrame) {
     ::write(write_fd, frame.data(), frame.size());
     ::close(write_fd);
 
-    EXPECT_THROW(vynkor::read_frame_full(read_fd, &wrong_key), vynkor::VeyronInternal);
+    EXPECT_THROW(vynkor::read_frame_full(read_fd, &wrong_key), vynkor::VynkorInternal);
     ::close(read_fd);
 }
 

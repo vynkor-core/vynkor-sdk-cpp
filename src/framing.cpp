@@ -81,7 +81,7 @@ std::vector<uint8_t> pack_frame(const std::string& target,
                                 const std::vector<uint8_t>& payload,
                                 uint16_t extra_flags) {
     if (payload.size() > MAX_PAYLOAD_SIZE)
-        throw VeyronPayloadTooLarge(payload.size());
+        throw VynkorPayloadTooLarge(payload.size());
 
     uint32_t crc = vynkor_crc32(payload.data(), payload.size());
 
@@ -118,7 +118,7 @@ std::vector<uint8_t> pack_frame_mac(const std::string& target,
                                     const std::array<uint8_t, 32>& session_key,
                                     uint16_t extra_flags) {
     if (payload.size() > MAX_PAYLOAD_SIZE)
-        throw VeyronPayloadTooLarge(payload.size());
+        throw VynkorPayloadTooLarge(payload.size());
 
     uint32_t crc = vynkor_crc32(payload.data(), payload.size());
 
@@ -156,7 +156,7 @@ static void recv_exact(int fd, uint8_t* buf, size_t n) {
         if (r < 0 && errno == EINTR)
             continue;
         if (r <= 0)
-            throw VeyronIoError("connection closed or recv error");
+            throw VynkorIoError("connection closed or recv error");
         total += static_cast<size_t>(r);
     }
 }
@@ -168,7 +168,7 @@ static void recv_exact_deadline(int fd, uint8_t* buf, size_t n, Deadline deadlin
     while (total < n) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline)
-            throw VeyronFrameReadTimeout();
+            throw VynkorFrameReadTimeout();
         const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
 
         struct pollfd pfd {};
@@ -178,16 +178,16 @@ static void recv_exact_deadline(int fd, uint8_t* buf, size_t n, Deadline deadlin
         if (pr < 0) {
             if (errno == EINTR)
                 continue;
-            throw VeyronIoError("poll failed during frame read");
+            throw VynkorIoError("poll failed during frame read");
         }
         if (pr == 0)
-            throw VeyronFrameReadTimeout();
+            throw VynkorFrameReadTimeout();
 
         const ssize_t r = ::read(fd, buf + total, n - total);
         if (r < 0 && errno == EINTR)
             continue;
         if (r <= 0)
-            throw VeyronIoError("connection closed or recv error");
+            throw VynkorIoError("connection closed or recv error");
         total += static_cast<size_t>(r);
     }
 }
@@ -196,14 +196,14 @@ static void recv_exact_deadline(int fd, uint8_t* buf, size_t n, Deadline deadlin
 static std::vector<uint8_t> zstd_decompress_bounded(const uint8_t* data, size_t len) {
     unsigned long long content_size = ZSTD_getFrameContentSize(data, len);
     if (content_size == ZSTD_CONTENTSIZE_ERROR)
-        throw VeyronInternal("decompress frame: invalid zstd frame");
+        throw VynkorInternal("decompress frame: invalid zstd frame");
     if (content_size == ZSTD_CONTENTSIZE_UNKNOWN || content_size > MAX_PAYLOAD_SIZE)
-        throw VeyronInternal("decompress frame: content size unknown or too large");
+        throw VynkorInternal("decompress frame: content size unknown or too large");
 
     std::vector<uint8_t> out(static_cast<size_t>(content_size));
     size_t result = ZSTD_decompress(out.data(), out.size(), data, len);
     if (ZSTD_isError(result) || result != out.size())
-        throw VeyronInternal(std::string("decompress frame: ") + ZSTD_getErrorName(result));
+        throw VynkorInternal(std::string("decompress frame: ") + ZSTD_getErrorName(result));
     return out;
 }
 
@@ -234,9 +234,39 @@ static std::vector<uint8_t> zstd_compress_level3(const uint8_t* data, size_t len
     std::vector<uint8_t> compressed(ZSTD_compressBound(len));
     size_t csize = ZSTD_compress(compressed.data(), compressed.size(), data, len, 3);
     if (ZSTD_isError(csize))
-        throw VeyronInternal(std::string("zstd compress failed: ") + ZSTD_getErrorName(csize));
+        throw VynkorInternal(std::string("zstd compress failed: ") + ZSTD_getErrorName(csize));
     compressed.resize(csize);
     return compressed;
+}
+
+std::array<uint8_t, FRAME_HEADER_SIZE> serialize_header_ws(
+    const std::string& target, uint16_t flags, const std::vector<uint8_t>& payload) {
+    std::array<uint8_t, FRAME_HEADER_SIZE> out{};
+    uint8_t target_bytes[32];
+    target_to_bytes(target, target_bytes);
+    build_header(out.data(), flags, target_bytes, payload);
+    return out;
+}
+
+std::vector<uint8_t> pack_frame_ws(const std::string& target,
+                                   uint16_t flags,
+                                   const std::vector<uint8_t>& payload,
+                                   const std::array<uint8_t, 32>* session_key) {
+    if (payload.size() > MAX_PAYLOAD_SIZE)
+        throw VynkorPayloadTooLarge(payload.size());
+
+    auto header = serialize_header_ws(target, flags, payload);
+
+    std::vector<uint8_t> frame;
+    frame.reserve(FRAME_HEADER_SIZE + payload.size() + (session_key ? MAC_TAG_LEN : 0));
+    frame.insert(frame.end(), header.begin(), header.end());
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    if (session_key != nullptr) {
+        auto tag = compute_tag(*session_key, header.data(), FRAME_HEADER_SIZE,
+                               payload.data(), payload.size());
+        frame.insert(frame.end(), tag.begin(), tag.end());
+    }
+    return frame;
 }
 
 std::vector<uint8_t> pack_frame_raw(const std::string& target,
@@ -244,7 +274,7 @@ std::vector<uint8_t> pack_frame_raw(const std::string& target,
                                     const std::vector<uint8_t>& payload,
                                     const std::array<uint8_t, 32>* session_key) {
     if (payload.size() > MAX_PAYLOAD_SIZE)
-        throw VeyronPayloadTooLarge(payload.size());
+        throw VynkorPayloadTooLarge(payload.size());
 
     uint8_t target_bytes[32];
     target_to_bytes(target, target_bytes);
@@ -288,6 +318,86 @@ std::vector<uint8_t> pack_frame_raw(const std::string& target,
 }
 
 // ---------------------------------------------------------------------------
+// Shared frame parsing — validates magic/length/CRC over the wire bytes,
+// normalizes FLAG_COMPRESSED (decompress + rebuild plaintext header), and
+// verifies the MAC when session_key is set. Used by both the fd reader and
+// parse_frame_from_buffer (WS path).
+// ---------------------------------------------------------------------------
+static FrameResult parse_frame_bytes(const std::vector<uint8_t>& buf,
+                                     const std::array<uint8_t, 32>* session_key,
+                                     size_t* consumed) {
+    size_t min_len = FRAME_HEADER_SIZE;
+    if (buf.size() < min_len)
+        throw VynkorIoError("frame shorter than header");
+
+    uint16_t magic;
+    std::memcpy(&magic, buf.data() + 0, 2);
+    if (ntohs(magic) != FRAME_MAGIC)
+        throw VynkorFrameMagicMismatch();
+
+    uint16_t flags;
+    std::memcpy(&flags, buf.data() + 2, 2);
+    flags = ntohs(flags);
+
+    uint32_t length;
+    std::memcpy(&length, buf.data() + 4, 4);
+    length = ntohl(length);
+    if (length > MAX_PAYLOAD_SIZE)
+        throw VynkorPayloadTooLarge(length);
+
+    const bool has_mac = (flags & FLAG_MAC_PRESENT) != 0;
+    const size_t total = FRAME_HEADER_SIZE + length + (has_mac ? MAC_TAG_LEN : 0);
+    if (buf.size() < total)
+        throw VynkorIoError("frame truncated");
+
+    uint32_t expected_crc;
+    std::memcpy(&expected_crc, buf.data() + 40, 4);
+    expected_crc = ntohl(expected_crc);
+
+    std::vector<uint8_t> payload(buf.begin() + FRAME_HEADER_SIZE,
+                                 buf.begin() + FRAME_HEADER_SIZE + length);
+
+    // CRC is over the wire bytes (possibly compressed); verify before decompressing.
+    if (vynkor_crc32(payload.data(), payload.size()) != expected_crc)
+        throw VynkorFrameCrcMismatch();
+
+    // Normalize the in-memory invariant: payload is always plaintext, and the
+    // header used for MAC verification describes the plaintext — mirroring
+    // src/ipc/framing.rs:228-241.
+    std::array<uint8_t, FRAME_HEADER_SIZE> effective_header;
+    std::memcpy(effective_header.data(), buf.data(), FRAME_HEADER_SIZE);
+    if (flags & FLAG_COMPRESSED) {
+        payload = zstd_decompress_bounded(payload.data(), payload.size());
+        flags &= static_cast<uint16_t>(~FLAG_COMPRESSED);
+        build_header(effective_header.data(), flags, buf.data() + 8, payload);
+    }
+
+    FrameResult result;
+    result.flags = flags;
+    result.raw_header = effective_header;
+    result.payload = std::move(payload);
+
+    if (has_mac) {
+        std::memcpy(result.mac.data(),
+                    buf.data() + FRAME_HEADER_SIZE + length, MAC_TAG_LEN);
+        result.has_mac = true;
+        if (session_key != nullptr) {
+            if (!verify_tag(*session_key,
+                            effective_header.data(), FRAME_HEADER_SIZE,
+                            result.payload.data(), result.payload.size(),
+                            result.mac.data(), MAC_TAG_LEN))
+                throw VynkorInternal("frame MAC verification failed");
+        }
+    } else if (session_key != nullptr) {
+        throw VynkorInternal("frame MAC verification failed");
+    }
+
+    if (consumed != nullptr)
+        *consumed = total;
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // read_frame_full_with_deadline — bounds the wait for the first byte too,
 // via poll(), then hands off to read_frame_full_with_timeout for the rest.
 // ---------------------------------------------------------------------------
@@ -296,7 +406,7 @@ FrameResult read_frame_full_with_deadline(int fd, const std::array<uint8_t, 32>*
     while (true) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline)
-            throw VeyronTimeout();
+            throw VynkorTimeout();
         const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
 
         struct pollfd pfd {};
@@ -306,10 +416,10 @@ FrameResult read_frame_full_with_deadline(int fd, const std::array<uint8_t, 32>*
         if (pr < 0) {
             if (errno == EINTR)
                 continue;
-            throw VeyronIoError("poll failed during frame read");
+            throw VynkorIoError("poll failed during frame read");
         }
         if (pr == 0)
-            throw VeyronTimeout();
+            throw VynkorTimeout();
 
         // Data is available; hand off with the remaining budget as the
         // mid-frame bound. Floor at 1ms so a just-signaled-readable fd
@@ -327,72 +437,41 @@ FrameResult read_frame_full_with_deadline(int fd, const std::array<uint8_t, 32>*
 // ---------------------------------------------------------------------------
 FrameResult read_frame_full_with_timeout(int fd, const std::array<uint8_t, 32>* session_key,
                                          int frame_timeout_ms) {
-    uint8_t header[FRAME_HEADER_SIZE];
+    std::vector<uint8_t> buf(FRAME_HEADER_SIZE);
     // Block indefinitely for the first byte of the next frame — an idle
     // connection between frames must not be torn down. Once a byte arrives,
     // a frame is in progress and the remainder is bounded by frame_timeout_ms.
-    recv_exact(fd, header, 1);
+    recv_exact(fd, buf.data(), 1);
     const Deadline deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(frame_timeout_ms);
-    recv_exact_deadline(fd, header + 1, FRAME_HEADER_SIZE - 1, deadline);
-
-    uint16_t magic;
-    std::memcpy(&magic, header + 0, 2);
-    if (ntohs(magic) != FRAME_MAGIC)
-        throw VeyronFrameMagicMismatch();
+    recv_exact_deadline(fd, buf.data() + 1, FRAME_HEADER_SIZE - 1, deadline);
 
     uint16_t flags;
-    std::memcpy(&flags, header + 2, 2);
+    std::memcpy(&flags, buf.data() + 2, 2);
     flags = ntohs(flags);
 
     uint32_t length;
-    std::memcpy(&length, header + 4, 4);
+    std::memcpy(&length, buf.data() + 4, 4);
     length = ntohl(length);
     if (length > MAX_PAYLOAD_SIZE)
-        throw VeyronPayloadTooLarge(length);
+        throw VynkorPayloadTooLarge(length);
 
-    uint32_t expected_crc;
-    std::memcpy(&expected_crc, header + 40, 4);
-    expected_crc = ntohl(expected_crc);
-
-    std::vector<uint8_t> payload(length);
-    if (length > 0)
-        recv_exact_deadline(fd, payload.data(), length, deadline);
-
-    // CRC is over the wire bytes (possibly compressed); verify before decompressing.
-    if (vynkor_crc32(payload.data(), payload.size()) != expected_crc)
-        throw VeyronFrameCrcMismatch();
-
-    // Normalize the in-memory invariant: payload is always plaintext, and the
-    // header used for MAC verification describes the plaintext — mirroring
-    // src/ipc/framing.rs:228-241.
-    std::array<uint8_t, FRAME_HEADER_SIZE> effective_header;
-    std::memcpy(effective_header.data(), header, FRAME_HEADER_SIZE);
-    if (flags & FLAG_COMPRESSED) {
-        payload = zstd_decompress_bounded(payload.data(), payload.size());
-        flags &= static_cast<uint16_t>(~FLAG_COMPRESSED);
-        build_header(effective_header.data(), flags, header + 8, payload);
+    const size_t rest = length + ((flags & FLAG_MAC_PRESENT) ? MAC_TAG_LEN : 0);
+    if (rest > 0) {
+        const size_t old_size = buf.size();
+        buf.resize(old_size + rest);
+        recv_exact_deadline(fd, buf.data() + old_size, rest, deadline);
     }
 
-    FrameResult result;
-    result.flags = flags;
-    result.raw_header = effective_header;
-    result.payload = std::move(payload);
+    return parse_frame_bytes(buf, session_key, nullptr);
+}
 
-    if (flags & FLAG_MAC_PRESENT) {
-        recv_exact_deadline(fd, result.mac.data(), MAC_TAG_LEN, deadline);
-        result.has_mac = true;
-        if (session_key != nullptr) {
-            if (!verify_tag(*session_key,
-                            effective_header.data(), FRAME_HEADER_SIZE,
-                            result.payload.data(), result.payload.size(),
-                            result.mac.data(), MAC_TAG_LEN))
-                throw VeyronInternal("frame MAC verification failed");
-        }
-    } else if (session_key != nullptr) {
-        throw VeyronInternal("frame MAC verification failed");
-    }
-
-    return result;
+// ---------------------------------------------------------------------------
+// parse_frame_from_buffer (WS path)
+// ---------------------------------------------------------------------------
+FrameResult parse_frame_from_buffer(const uint8_t* data, size_t len,
+                                    const std::array<uint8_t, 32>* session_key,
+                                    size_t* consumed) {
+    return parse_frame_bytes(std::vector<uint8_t>(data, data + len), session_key, consumed);
 }
 
 // ---------------------------------------------------------------------------

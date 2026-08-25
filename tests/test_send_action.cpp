@@ -1,4 +1,4 @@
-// P7-02: VeyronClient::send_action/send_action_streaming/send_request_chunk/
+// P7-02: VynkorClient::send_action/send_action_streaming/send_request_chunk/
 // send_response_chunk/close_session — mirrors sdk/rust/src/client.rs's
 // send_action tests plus streaming-specific additions.
 
@@ -41,7 +41,7 @@ void send_kernel_side(int fd, const Envelope& env) {
 
 TEST(SendAction, OkResponseReturned) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         Envelope req = recv_kernel_side(b);
@@ -67,7 +67,7 @@ TEST(SendAction, OkResponseReturned) {
 
 TEST(SendAction, StreamAbortForActionIdRaises) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         Envelope req = recv_kernel_side(b);
@@ -79,13 +79,13 @@ TEST(SendAction, StreamAbortForActionIdRaises) {
     });
 
     std::vector<uint8_t> params{'{', '}'};
-    EXPECT_THROW(client.send_action("get_weather", params, 1000), VeyronInternal);
+    EXPECT_THROW(client.send_action("get_weather", params, 1000), VynkorInternal);
     kernel.join();
 }
 
 TEST(SendAction, KernelErrorEnvelopeRaises) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         recv_kernel_side(b);
@@ -97,13 +97,13 @@ TEST(SendAction, KernelErrorEnvelopeRaises) {
     });
 
     std::vector<uint8_t> params{'{', '}'};
-    EXPECT_THROW(client.send_action("get_weather", params, 1000), VeyronInternal);
+    EXPECT_THROW(client.send_action("get_weather", params, 1000), VynkorInternal);
     kernel.join();
 }
 
 TEST(SendAction, TimesOutWhenNoResponse) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         recv_kernel_side(b);
@@ -112,7 +112,7 @@ TEST(SendAction, TimesOutWhenNoResponse) {
 
     std::vector<uint8_t> params{'{', '}'};
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(client.send_action("get_weather", params, 150), VeyronTimeout);
+    EXPECT_THROW(client.send_action("get_weather", params, 150), VynkorTimeout);
     const auto elapsed = std::chrono::steady_clock::now() - start;
     EXPECT_LT(elapsed, std::chrono::seconds(2));
 
@@ -122,7 +122,7 @@ TEST(SendAction, TimesOutWhenNoResponse) {
 
 TEST(SendAction, UnrelatedEnvelopeDiscardedThenResponseReturned) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         Envelope req = recv_kernel_side(b);
@@ -147,7 +147,7 @@ TEST(SendAction, UnrelatedEnvelopeDiscardedThenResponseReturned) {
 
 TEST(SendActionStreaming, ReturnsActionIdImmediatelyWithoutBlocking) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         Envelope req = recv_kernel_side(b);
@@ -165,7 +165,7 @@ TEST(SendActionStreaming, ReturnsActionIdImmediatelyWithoutBlocking) {
 
 TEST(SendActionStreaming, RequestAndResponseChunksSerializeExpectedFields) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         Envelope req_chunk = recv_kernel_side(b);
@@ -191,7 +191,7 @@ TEST(SendActionStreaming, RequestAndResponseChunksSerializeExpectedFields) {
 
 TEST(CloseSession, SerializesActionIdAndReason) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     std::thread kernel([&] {
         Envelope env = recv_kernel_side(b);

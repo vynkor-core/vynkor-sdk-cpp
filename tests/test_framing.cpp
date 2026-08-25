@@ -30,7 +30,7 @@ TEST(FramingMalformed, RejectsBadMagic) {
     write_all(write_fd, frame);
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, nullptr), VeyronFrameMagicMismatch);
+    EXPECT_THROW(read_frame_full(read_fd, nullptr), VynkorFrameMagicMismatch);
     ::close(read_fd);
 }
 
@@ -47,7 +47,7 @@ TEST(FramingMalformed, RejectsOversizedLengthField) {
     write_all(write_fd, std::vector<uint8_t>(header, header + FRAME_HEADER_SIZE));
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, nullptr), VeyronPayloadTooLarge);
+    EXPECT_THROW(read_frame_full(read_fd, nullptr), VynkorPayloadTooLarge);
     ::close(read_fd);
 }
 
@@ -60,7 +60,7 @@ TEST(FramingMalformed, RejectsCrcMismatch) {
     write_all(write_fd, frame);
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, nullptr), VeyronFrameCrcMismatch);
+    EXPECT_THROW(read_frame_full(read_fd, nullptr), VynkorFrameCrcMismatch);
     ::close(read_fd);
 }
 
@@ -72,7 +72,7 @@ TEST(FramingMalformed, RejectsTruncatedHeader) {
     write_all(write_fd, partial_header);
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, nullptr), VeyronIoError);
+    EXPECT_THROW(read_frame_full(read_fd, nullptr), VynkorIoError);
     ::close(read_fd);
 }
 
@@ -86,7 +86,7 @@ TEST(FramingMalformed, RejectsTruncatedPayload) {
     write_all(write_fd, frame);
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, nullptr), VeyronIoError);
+    EXPECT_THROW(read_frame_full(read_fd, nullptr), VynkorIoError);
     ::close(read_fd);
 }
 
@@ -103,7 +103,7 @@ TEST(FramingMalformed, RejectsTruncatedMacTag) {
     write_all(write_fd, frame);
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, &key), VeyronIoError);
+    EXPECT_THROW(read_frame_full(read_fd, &key), VynkorIoError);
     ::close(read_fd);
 }
 
@@ -128,7 +128,7 @@ TEST(FramingMalformed, RejectsGarbageCompressedPayload) {
     write_all(write_fd, frame);
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, nullptr), VeyronInternal);
+    EXPECT_THROW(read_frame_full(read_fd, nullptr), VynkorInternal);
     ::close(read_fd);
 }
 
@@ -146,7 +146,7 @@ TEST(FramingMalformed, RejectsMissingMacOnSecuredConnection) {
     write_all(write_fd, frame);
     ::close(write_fd);
 
-    EXPECT_THROW(read_frame_full(read_fd, &key), VeyronInternal);
+    EXPECT_THROW(read_frame_full(read_fd, &key), VynkorInternal);
     ::close(read_fd);
 }
 

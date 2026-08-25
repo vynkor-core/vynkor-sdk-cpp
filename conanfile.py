@@ -3,12 +3,12 @@ from conan.tools.build import check_min_cppstd
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 
 
-class VeyronSdkConan(ConanFile):
+class VynkorSdkConan(ConanFile):
     name = "vynkor-sdk-cpp"
     version = "0.1.0"
     description = (
-        "C++ SDK for writing Veyron plugins - async IPC client, Plugin "
-        "interface, and the Veyron wire protocol (framing, zstd compression, "
+        "C++ SDK for writing Vynkor plugins - async IPC client, Plugin "
+        "interface, and the Vynkor wire protocol (framing, zstd compression, "
         "HMAC frame MACs)."
     )
     license = "MIT"

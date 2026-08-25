@@ -59,7 +59,7 @@ TEST(FramingTimeout, StalledMidFrameEventuallyDisconnectsRatherThanHanging) {
     ::write(write_fd, frame.data(), FRAME_HEADER_SIZE);
 
     const auto start = std::chrono::steady_clock::now();
-    EXPECT_THROW(read_frame_full_with_timeout(read_fd, nullptr, 200), VeyronFrameReadTimeout);
+    EXPECT_THROW(read_frame_full_with_timeout(read_fd, nullptr, 200), VynkorFrameReadTimeout);
     const auto elapsed = std::chrono::steady_clock::now() - start;
 
     EXPECT_LT(elapsed, std::chrono::seconds(2));

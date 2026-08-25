@@ -88,6 +88,20 @@ std::vector<uint8_t> pack_frame_raw(const std::string& target,
                                     const std::vector<uint8_t>& payload,
                                     const std::array<uint8_t, 32>* session_key);
 
+// Build a wire frame WITHOUT outbound compression — the WebSocket transport's
+// writer (R5-03: the gateway rejects FLAG_COMPRESSED, so a frame is one WS
+// binary message of header + payload + optional MAC tag). `flags` must
+// already include FLAG_MAC_PRESENT when session_key is set.
+std::vector<uint8_t> pack_frame_ws(const std::string& target,
+                                   uint16_t flags,
+                                   const std::vector<uint8_t>& payload,
+                                   const std::array<uint8_t, 32>* session_key);
+
+// Serialize just the 44-byte wire header for target/flags/payload (used by
+// the WS writer to compute the MAC over the plaintext header).
+std::array<uint8_t, FRAME_HEADER_SIZE> serialize_header_ws(
+    const std::string& target, uint16_t flags, const std::vector<uint8_t>& payload);
+
 // Result of read_frame_full.
 struct FrameResult {
     std::vector<uint8_t>                    payload;
@@ -110,13 +124,13 @@ static constexpr int FRAME_READ_TIMEOUT_MS = 10000;
 // (bounded to MAX_PAYLOAD_SIZE) and `flags`/`raw_header` describe the
 // decompressed bytes, matching the kernel's read-side normalization.
 // If session_key is non-null and FLAG_MAC_PRESENT is set, verifies the MAC tag;
-// throws VeyronInternal on mismatch. If session_key is null, MAC bytes are read
+// throws VynkorInternal on mismatch. If session_key is null, MAC bytes are read
 // and stored but not verified.
 //
 // Blocks indefinitely waiting for the first byte of the next frame (an idle
 // connection must not be torn down); once a byte arrives, the remainder of
 // the frame must complete within frame_timeout_ms or this throws
-// VeyronFrameReadTimeout.
+// VynkorFrameReadTimeout.
 FrameResult read_frame_full_with_timeout(int fd,
                                          const std::array<uint8_t, 32>* session_key,
                                          int frame_timeout_ms);
@@ -125,7 +139,7 @@ FrameResult read_frame_full_with_timeout(int fd,
 // of the frame too (via poll()), not just mid-frame completion. Used by
 // request/response client methods (publish_event, and future streaming/
 // session methods) that need a caller-supplied overall deadline.
-// Throws VeyronTimeout if the deadline passes before a frame arrives.
+// Throws VynkorTimeout if the deadline passes before a frame arrives.
 FrameResult read_frame_full_with_deadline(int fd,
                                           const std::array<uint8_t, 32>* session_key,
                                           std::chrono::steady_clock::time_point deadline);
@@ -134,6 +148,15 @@ inline FrameResult read_frame_full(int fd,
                                    const std::array<uint8_t, 32>* session_key = nullptr) {
     return read_frame_full_with_timeout(fd, session_key, FRAME_READ_TIMEOUT_MS);
 }
+
+// Parse one complete wire frame from an in-memory buffer (the WS transport:
+// one binary WebSocket message == one wire frame). Same validation and
+// FLAG_COMPRESSED normalization as read_frame_full_with_timeout; MAC is
+// verified when session_key is non-null (FLAG_MAC_PRESENT required then).
+// `consumed` receives the number of bytes taken from the front of the buffer.
+FrameResult parse_frame_from_buffer(const uint8_t* data, size_t len,
+                                    const std::array<uint8_t, 32>* session_key,
+                                    size_t* consumed);
 
 // Backward-compat: returns only payload bytes. Does NOT verify MAC.
 std::vector<uint8_t> read_frame(int fd);

@@ -21,7 +21,7 @@ static std::array<uint8_t, 32> hmac_sha256(
     unsigned int out_len = 32;
     if (!HMAC(EVP_sha256(), key, static_cast<int>(key_len),
               data, data_len, out.data(), &out_len))
-        throw VeyronInternal("mac: HMAC failed");
+        throw VynkorInternal("mac: HMAC failed");
     return out;
 }
 
@@ -40,7 +40,7 @@ static std::array<uint8_t, 32> hkdf_expand(
     // Single round: T(1) = HMAC(PRK, "" || info || 0x01)
     // We only ever need 32 bytes so one round suffices.
     if (length > 32)
-        throw VeyronInternal("mac: hkdf_expand length > 32 unsupported");
+        throw VynkorInternal("mac: hkdf_expand length > 32 unsupported");
 
     std::vector<uint8_t> input;
     input.insert(input.end(), info.begin(), info.end());
@@ -78,7 +78,7 @@ std::array<uint8_t, 32> compute_tag(
 {
     HMAC_CTX* ctx = HMAC_CTX_new();
     if (!ctx)
-        throw VeyronInternal("mac: HMAC_CTX_new failed");
+        throw VynkorInternal("mac: HMAC_CTX_new failed");
 
     std::array<uint8_t, 32> out{};
     unsigned int out_len = 32;
@@ -89,7 +89,7 @@ std::array<uint8_t, 32> compute_tag(
         !HMAC_Final(ctx, out.data(), &out_len))
     {
         HMAC_CTX_free(ctx);
-        throw VeyronInternal("mac: HMAC computation failed");
+        throw VynkorInternal("mac: HMAC computation failed");
     }
 
     HMAC_CTX_free(ctx);

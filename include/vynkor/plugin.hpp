@@ -10,7 +10,7 @@
 
 namespace vynkor {
 
-// A Veyron plugin, mirroring the Rust SDK's `Plugin` trait 1:1. Implement
+// A Vynkor plugin, mirroring the Rust SDK's `Plugin` trait 1:1. Implement
 // id(), manifest(), and on_message(); everything else has a sensible default.
 //
 // Lifecycle driven by run()/run_with()/serve():
@@ -41,7 +41,7 @@ public:
 
     // Called once after successful registration, before the receive loop.
     // Use the client to subscribe, negotiate audio streams, etc.
-    virtual void on_init(VeyronClient& client) { (void)client; }
+    virtual void on_init(VynkorClient& client) { (void)client; }
 
     // Called for every inbound envelope not handled by the SDK (Ping/Pong,
     // PluginShutdown and Event have dedicated handling). Return an envelope to
@@ -73,20 +73,32 @@ public:
     void run_with(const std::string& socket_path) {
         const std::string token = resolve_jwt_token("");
         const std::vector<uint8_t> secret = resolve_jwt_secret({});
-        VeyronClient client(socket_path, secret);
+        VynkorClient client(socket_path, secret);
         client.connect();
+        serve(client, token);
+    }
+
+    // Connect to the kernel's WebSocket gateway (D-05) and serve until
+    // shutdown — the WS mirror of run_with() for remote devices. JWT
+    // credentials come from the same env vars as the UDS path; the token is
+    // presented both in the Sec-WebSocket-Protocol handshake header and in
+    // the registration envelope.
+    void run_ws(const std::string& url) {
+        const std::string token = resolve_jwt_token("");
+        const std::vector<uint8_t> secret = resolve_jwt_secret({});
+        VynkorClient client = VynkorClient::connect_ws(url, token, secret);
         serve(client, token);
     }
 
     // Register on an existing client and run the receive loop. Building block
     // for run(); also useful in tests.
-    void serve(VeyronClient& client, const std::string& jwt_token) {
+    void serve(VynkorClient& client, const std::string& jwt_token) {
         client_ = &client;
 
         PluginRegisterAck ack = client.register_full(id(), version(), manifest(), jwt_token);
         if (!ack.accepted()) {
             client_ = nullptr;
-            throw VeyronPermissionDenied("registration rejected: " + ack.reject_reason());
+            throw VynkorPermissionDenied("registration rejected: " + ack.reject_reason());
         }
 
         try {
@@ -157,7 +169,7 @@ protected:
     // on_init and cleared after on_shutdown; valid inside on_init / on_message /
     // on_event / on_shutdown for plugins that need to send additional traffic
     // (e.g. multi-message streaming responses).
-    VeyronClient* client_ = nullptr;
+    VynkorClient* client_ = nullptr;
 };
 
 } // namespace vynkor

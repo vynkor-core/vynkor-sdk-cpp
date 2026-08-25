@@ -1,4 +1,4 @@
-// Lightweight demo plugin for the Veyron C++ SDK.
+// Lightweight demo plugin for the Vynkor C++ SDK.
 //
 // Shows: lifecycle hooks, event subscription, action handling (plain,
 // streaming, and publish-from-plugin), and SessionClose dispatch.
@@ -20,7 +20,7 @@ class EchoPlugin : public Plugin {
 public:
     const std::string& id() const override { return id_; }
 
-    void on_init(VeyronClient& client) override {
+    void on_init(VynkorClient& client) override {
         std::cout << "[" << id_ << "] registered, subscribing to events\n";
         client.subscribe({"system.low_memory"});
     }

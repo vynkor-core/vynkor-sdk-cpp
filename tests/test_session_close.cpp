@@ -1,4 +1,4 @@
-// P7-03: VeyronClient::recv() distinguishes SessionClose from
+// P7-03: VynkorClient::recv() distinguishes SessionClose from
 // ActionStreamAbort — mirrors sdk/rust/tests/protocol.rs's
 // recv_distinguishes_session_close_from_stream_abort.
 
@@ -31,7 +31,7 @@ void send_kernel_side(int fd, const Envelope& env) {
 
 TEST(SessionClose, RecvReturnsSessionClose) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     Envelope close_env;
     auto* close = close_env.mutable_session_close();
@@ -47,7 +47,7 @@ TEST(SessionClose, RecvReturnsSessionClose) {
 
 TEST(SessionClose, RecvDistinguishesFromActionStreamAbort) {
     auto [a, b] = make_socketpair();
-    VeyronClient client(a);
+    VynkorClient client(a);
 
     Envelope close_env;
     auto* close = close_env.mutable_session_close();
