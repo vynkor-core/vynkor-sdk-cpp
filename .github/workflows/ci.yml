@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ clang \
+            cmake pkg-config \
+            libprotobuf-dev protobuf-compiler \
+            libssl-dev \
+            libabsl-dev \
+            libzstd-dev \
+            libgtest-dev
+
+      - name: Configure
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug
+        env:
+          CC:  ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
+
+  # T-14 harnesses must keep compiling; run them only locally against a real
+  # kernel, so CI just builds them (requires Clang per the CMake option).
+  fuzz-harnesses:
+    name: Fuzz harness build (Clang)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake pkg-config \
+            libprotobuf-dev protobuf-compiler \
+            libssl-dev \
+            libabsl-dev \
+            libzstd-dev
+
+      - name: Configure (VYNKOR_BUILD_FUZZERS=ON)
+        run: cmake -B build-fuzz -S . -DVYNKOR_BUILD_FUZZERS=ON -DCMAKE_BUILD_TYPE=Release
+        env:
+          CC:  clang
+          CXX: clang++
+
+      - name: Build harnesses
+        run: cmake --build build-fuzz --parallel

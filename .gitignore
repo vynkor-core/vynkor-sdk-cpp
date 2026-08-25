@@ -6,6 +6,9 @@ CTestTestfile.cmake
 cmake_install.cmake
 compile_commands.json
 Testing/
+
+# local tool state (opencode plans/sessions)
+.omo/
 *.o
 *.obj
 *.a
