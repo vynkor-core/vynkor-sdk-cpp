@@ -85,15 +85,17 @@ endif()
 
 # ── Tests ──────────────────────────────────────────────────────────────────
 include(CTest)
-find_package(GTest REQUIRED)
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
 
-add_executable(vynkor_sdk_tests tests/test_mac.cpp tests/test_env.cpp tests/test_plugin.cpp tests/test_plugin_ping.cpp tests/test_framing.cpp tests/test_framing_timeout.cpp tests/test_client.cpp tests/test_fragmentation.cpp tests/test_publish_event.cpp tests/test_send_action.cpp tests/test_session_close.cpp tests/test_ws.cpp tests/test_concurrent_loop.cpp tests/test_confirmation_gate.cpp)
-target_link_libraries(vynkor_sdk_tests
-    PRIVATE
-    vynkor_sdk_cpp
-    GTest::GTest
-)
-add_test(NAME vynkor_sdk_tests COMMAND vynkor_sdk_tests)
+    add_executable(vynkor_sdk_tests tests/test_mac.cpp tests/test_env.cpp tests/test_plugin.cpp tests/test_plugin_ping.cpp tests/test_framing.cpp tests/test_framing_timeout.cpp tests/test_client.cpp tests/test_fragmentation.cpp tests/test_publish_event.cpp tests/test_send_action.cpp tests/test_session_close.cpp tests/test_ws.cpp tests/test_concurrent_loop.cpp tests/test_confirmation_gate.cpp)
+    target_link_libraries(vynkor_sdk_tests
+        PRIVATE
+        vynkor_sdk_cpp
+        GTest::GTest
+    )
+    add_test(NAME vynkor_sdk_tests COMMAND vynkor_sdk_tests)
+endif()
 
 # ── Fuzzing (T-14) ─────────────────────────────────────────────────────────
 # libFuzzer requires Clang; off by default so a normal GCC/Clang build (and
