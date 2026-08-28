@@ -1,6 +1,6 @@
 // libFuzzer harness for vynkor::read_frame / read_frame_full (T-14).
 //
-// Build: cmake -DCMAKE_CXX_COMPILER=clang++ -DVEYRON_BUILD_FUZZERS=ON ..
+// Build: cmake -DCMAKE_CXX_COMPILER=clang++ -DVYNKOR_BUILD_FUZZERS=ON ..
 //        make fuzz_framing
 // Run:   ./fuzz_framing -max_len=1100000   # a bit over MAX_PAYLOAD_SIZE
 //
