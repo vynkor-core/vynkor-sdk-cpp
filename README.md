@@ -1,4 +1,7 @@
-# vynkor-sdk (C++)
+# vynkor-sdk-cpp
+
+[![CI](https://github.com/vynkor-core/vynkor-sdk-cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/vynkor-core/vynkor-sdk-cpp/actions/workflows/ci.yml)
+
 
 C++ SDK for writing [vynkor](https://github.com/vynkor-core/vynkor) plugins.
 
