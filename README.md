@@ -102,6 +102,8 @@ for plugins that send extra traffic (e.g. multi-message streaming replies).
 | `VYN_SOCKET_PATH` | Kernel UDS path. Default: `XDG_RUNTIME_DIR` → `/run/user/<uid>` → `~/.local/state/vyn/run` (never shared `/tmp`; the `~/.local/state/vyn/run` fallback is created with mode `0700`). |
 | `VYN_JWT_TOKEN`   | JWT presented at registration (required on secured kernels).   |
 | `VYN_JWT_SECRET`  | Shared secret; enables per-frame HMAC-SHA256 tags after registration. |
+| `VYN_DEVICE_ID`   | Paired device id (`run_ws` only, E-01). Requires `VYN_DEVICE_SECRET`. |
+| `VYN_DEVICE_SECRET` | Paired device's own MAC secret (`run_ws` only, E-01); replaces `VYN_JWT_SECRET`. |
 
 ## Errors
 
@@ -159,6 +161,7 @@ client.send_raw_audio("peer-plugin", std::vector<uint8_t>{...});
 - `VynkorClient(socket_path, secret)` + member `connect()` — the primary ctor pattern.
 - `VynkorClient::connect(socket_path)` / `connect_with_secret(socket_path, secret)` / `connect_from_env()` — static factories returning a connected client (Rust parity).
 - `VynkorClient::connect_ws(url, jwt_token, secret = {})` — the kernel's WebSocket gateway (`ws://host:port/ws`, or `wss://`), for remote devices (D-05).
+- `VynkorClient::connect_ws_device(url, jwt_token, device_id, device_secret)` — same, for a paired device (E-01): registration carries `device_id`, MAC keyed off `device_secret`.
 - `VynkorClient(fd, secret)` — adopt an already-connected fd (tests).
 - `is_secured()` — true once a secured registration has derived the frame-MAC key.
 
@@ -175,9 +178,15 @@ handled transparently. On a dropped connection reconnect by calling
 `connect_ws` again and re-registering — the session key is re-derived from
 the fresh nonce in the new ack.
 
-`Plugin::run_ws(url)` is the WS mirror of `run_with`: same
-`VYN_JWT_TOKEN`/`VYN_JWT_SECRET` env credentials, token presented both in the
-handshake header and in the registration envelope:
+`Plugin::run_ws(url)` is the WS mirror of `run_with`. A **paired device**
+(CD-02 / E-01) sets `VYN_DEVICE_ID` + `VYN_DEVICE_SECRET` from `vyn device
+connect`: registration carries `device_id` and the frame MAC keys off the
+device's own secret, so the host master `jwt_secret` never leaves the host.
+`run_ws` throws on a half-set pair, or on `VYN_JWT_SECRET` set next to a
+device pair; without a device pair the legacy `VYN_JWT_SECRET` path applies
+(`resolve_ws_credentials`, same policy as the Rust SDK). The token
+(`VYN_JWT_TOKEN`) is presented both in the handshake header and in the
+registration envelope:
 
 ```cpp
 EchoPlugin plugin;
@@ -268,7 +277,7 @@ The kernel stays dumb; the gate keys on the kernel-stamped
 // ConcurrentHandler::on_action.
 vynkor::ConfirmationGate gate("transfer", "Move money between accounts",
                               R"({"type":"object"})",
-                              vynkor::ACTION_RISK_CRITICAL, {"device.*"});
+                              vynkor::ACTION_RISK_CRITICAL, {"phone-1"});
 auto [actions, specs] = gate.manifest_entries();  // merge into PluginManifest
 
 std::vector<vynkor::Envelope> replies = gate.route(
