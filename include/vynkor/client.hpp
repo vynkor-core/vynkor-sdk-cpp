@@ -64,6 +64,20 @@ public:
                                    const std::string& jwt_token,
                                    const std::vector<uint8_t>& secret = {});
 
+    // Connect a paired remote device (CD-02 / E-01) to the WS gateway.
+    // jwt_token + device_secret are the pair from `vyn device connect`; the
+    // host master jwt_secret never leaves the host. Registration carries
+    // device_id, so the kernel checks the token's sub against it and keys
+    // the frame MAC off device_secret.
+    static VynkorClient connect_ws_device(const std::string& url,
+                                          const std::string& jwt_token,
+                                          const std::string& device_id,
+                                          const std::vector<uint8_t>& device_secret);
+
+    // Mark this connection as a paired device: registration sends device_id,
+    // and the secret given at construction must be that device's own secret.
+    void set_device_id(const std::string& device_id) { device_id_ = device_id; }
+
     // Member connect (the ctor(socket_path, secret) + connect() pattern).
     void connect();
     void close();
@@ -185,6 +199,9 @@ private:
     int                                    fd_ = -1;
     std::unique_ptr<WsConnection>          ws_;
     std::vector<uint8_t>                   secret_;
+    // sent as PluginRegister.device_id; set => kernel keys the MAC off the
+    // device's credential row, not the master secret (E-01)
+    std::string                            device_id_;
     std::optional<std::array<uint8_t,32>>  session_key_;
 
     // In-flight fragment reassembly, keyed by stream_id. Mirrors the rust

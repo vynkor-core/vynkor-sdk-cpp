@@ -79,14 +79,19 @@ public:
     }
 
     // Connect to the kernel's WebSocket gateway (D-05) and serve until
-    // shutdown — the WS mirror of run_with() for remote devices. JWT
-    // credentials come from the same env vars as the UDS path; the token is
-    // presented both in the Sec-WebSocket-Protocol handshake header and in
-    // the registration envelope.
+    // shutdown — the WS mirror of run_with() for remote devices. A paired
+    // device (E-01) sets VYN_DEVICE_ID + VYN_DEVICE_SECRET (from `vyn device
+    // connect`); without them the legacy VYN_JWT_SECRET path applies. See
+    // resolve_ws_credentials() for the strict policy. The token
+    // (VYN_JWT_TOKEN) is presented both in the Sec-WebSocket-Protocol
+    // handshake header and in the registration envelope.
     void run_ws(const std::string& url) {
         const std::string token = resolve_jwt_token("");
-        const std::vector<uint8_t> secret = resolve_jwt_secret({});
-        VynkorClient client = VynkorClient::connect_ws(url, token, secret);
+        const WsCredentials creds = resolve_ws_credentials_from_env();
+        VynkorClient client =
+            creds.kind == WsCredentials::Kind::Device
+                ? VynkorClient::connect_ws_device(url, token, creds.device_id, creds.secret)
+                : VynkorClient::connect_ws(url, token, creds.secret);
         serve(client, token);
     }
 

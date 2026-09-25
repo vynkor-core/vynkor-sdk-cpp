@@ -1,4 +1,5 @@
 #include "vynkor/env.hpp"
+#include "vynkor/error.hpp"
 
 #include <cstdlib>
 #include <string>
@@ -62,6 +63,39 @@ std::vector<uint8_t> resolve_jwt_secret(const std::vector<uint8_t>& explicit_sec
         return std::vector<uint8_t>(secret, secret + std::string(secret).size());
     }
     return {};
+}
+
+WsCredentials resolve_ws_credentials(const std::string& device_id,
+                                     const std::string& device_secret,
+                                     const std::string& jwt_secret) {
+    const bool has_id = !device_id.empty();
+    const bool has_secret = !device_secret.empty();
+    if (has_id && has_secret) {
+        // E-01: the master secret must never reach a paired device
+        if (!jwt_secret.empty())
+            throw VynkorInternal(
+                "VYN_JWT_SECRET is set alongside VYN_DEVICE_ID/VYN_DEVICE_SECRET — "
+                "a paired device must not hold the host master secret; unset it");
+        return {WsCredentials::Kind::Device, device_id,
+                std::vector<uint8_t>(device_secret.begin(), device_secret.end())};
+    }
+    if (has_id)
+        throw VynkorInternal("VYN_DEVICE_ID is set without VYN_DEVICE_SECRET");
+    if (has_secret)
+        throw VynkorInternal("VYN_DEVICE_SECRET is set without VYN_DEVICE_ID");
+    if (!jwt_secret.empty())
+        return {WsCredentials::Kind::Shared, "",
+                std::vector<uint8_t>(jwt_secret.begin(), jwt_secret.end())};
+    return {};
+}
+
+WsCredentials resolve_ws_credentials_from_env() {
+    auto get = [](const char* key) {
+        const char* v = std::getenv(key);
+        return std::string(v ? v : "");
+    };
+    return resolve_ws_credentials(get("VYN_DEVICE_ID"), get("VYN_DEVICE_SECRET"),
+                                  get("VYN_JWT_SECRET"));
 }
 
 } // namespace vynkor

@@ -102,6 +102,15 @@ VynkorClient VynkorClient::connect_ws(const std::string& url,
     return client;
 }
 
+VynkorClient VynkorClient::connect_ws_device(const std::string& url,
+                                             const std::string& jwt_token,
+                                             const std::string& device_id,
+                                             const std::vector<uint8_t>& device_secret) {
+    VynkorClient client = connect_ws(url, jwt_token, device_secret);
+    client.set_device_id(device_id);
+    return client;
+}
+
 void VynkorClient::connect() {
     close();
     fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -162,6 +171,7 @@ PluginRegisterAck VynkorClient::register_full(const std::string& plugin_id,
     reg->set_plugin_id(plugin_id);
     reg->set_version(version);
     reg->set_jwt_token(jwt_token);
+    reg->set_device_id(device_id_);
     *reg->mutable_manifest() = manifest;
 
     // Registration frame is always CRC-only; session_key not yet derived.

@@ -49,7 +49,7 @@ std::string extract_pending_id(const ActionResponse& resp) {
 } // namespace
 
 TEST(ConfirmationGate, RequestStoresPendingAndReturnsPendingId) {
-    const ConfirmationGate gate = make_gate({"device.phone"});
+    const ConfirmationGate gate = make_gate({"phone-1"});
     const ActionResponse resp = run(gate, make_request(
         "request_transfer", "a1", "ai", "{\"amount\": 100, \"to\": \"bob\"}"));
 
@@ -64,14 +64,14 @@ TEST(ConfirmationGate, RequestStoresPendingAndReturnsPendingId) {
 }
 
 TEST(ConfirmationGate, AnyCallerCanRequestEvenOneNotAllowedToConfirm) {
-    const ConfirmationGate gate = make_gate({"device.phone"});
+    const ConfirmationGate gate = make_gate({"phone-1"});
     const ActionResponse resp = run(gate, make_request(
         "request_transfer", "a1", "some_other_plugin", "{\"amount\": 1}"));
     EXPECT_EQ(resp.status(), ActionStatus::ACTION_OK);
 }
 
 TEST(ConfirmationGate, ApprovedCallerConfirmsAndExecutesStoredParams) {
-    const ConfirmationGate gate = make_gate({"device.phone"});
+    const ConfirmationGate gate = make_gate({"phone-1"});
     const std::string pending_id =
         extract_pending_id(run(gate, make_request(
             "request_transfer", "a1", "ai", "{\"amount\": 42, \"to\": \"bob\"}")));
@@ -79,7 +79,7 @@ TEST(ConfirmationGate, ApprovedCallerConfirmsAndExecutesStoredParams) {
     // The executor must receive the *stored* params, not anything the
     // confirming caller supplies.
     const ActionResponse resp = run(gate, make_request(
-        "confirm_transfer", "a2", "device.phone",
+        "confirm_transfer", "a2", "phone-1",
         "{\"pending_id\": \"" + pending_id + "\", \"amount\": 9999}"));
 
     EXPECT_EQ(resp.status(), ActionStatus::ACTION_OK);
@@ -90,7 +90,7 @@ TEST(ConfirmationGate, ApprovedCallerConfirmsAndExecutesStoredParams) {
 }
 
 TEST(ConfirmationGate, UnapprovedCallerIsDeniedEvenForARealPendingId) {
-    const ConfirmationGate gate = make_gate({"device.phone"});
+    const ConfirmationGate gate = make_gate({"phone-1"});
     const std::string pending_id =
         extract_pending_id(run(gate, make_request(
             "request_transfer", "a1", "ai", "{\"amount\": 1}")));
@@ -108,14 +108,14 @@ TEST(ConfirmationGate, UnapprovedCallerIsDeniedEvenForARealPendingId) {
 }
 
 TEST(ConfirmationGate, PrefixGlobMatchesAllSubDevices) {
-    const ConfirmationGate gate = make_gate({"device.*"});
+    const ConfirmationGate gate = make_gate({"phone-1.*"});
     const std::string pending_id =
         extract_pending_id(run(gate, make_request(
-            "request_transfer", "a1", "device.phone", "{\"amount\": 1}")));
+            "request_transfer", "a1", "phone-1.mic", "{\"amount\": 1}")));
 
-    // Any device.* mirror may confirm.
+    // Any phone-1.* mirror may confirm.
     const ActionResponse ok = run(gate, make_request(
-        "confirm_transfer", "a2", "device.geo",
+        "confirm_transfer", "a2", "phone-1.geo",
         "{\"pending_id\": \"" + pending_id + "\"}"));
     EXPECT_EQ(ok.status(), ActionStatus::ACTION_OK);
 
@@ -128,22 +128,22 @@ TEST(ConfirmationGate, PrefixGlobMatchesAllSubDevices) {
 }
 
 TEST(ConfirmationGate, UnknownOrMissingPendingIdErrors) {
-    const ConfirmationGate gate = make_gate({"device.phone"});
+    const ConfirmationGate gate = make_gate({"phone-1"});
 
     const ActionResponse unknown = run(gate, make_request(
-        "confirm_transfer", "a1", "device.phone",
+        "confirm_transfer", "a1", "phone-1",
         "{\"pending_id\": \"pending-does-not-exist\"}"));
     EXPECT_EQ(unknown.status(), ActionStatus::ACTION_ERROR);
     EXPECT_NE(unknown.error().find("no pending transfer request"), std::string::npos);
 
     const ActionResponse malformed = run(gate, make_request(
-        "confirm_transfer", "a2", "device.phone", "{}"));
+        "confirm_transfer", "a2", "phone-1", "{}"));
     EXPECT_EQ(malformed.status(), ActionStatus::ACTION_ERROR);
     EXPECT_NE(malformed.error().find("pending_id"), std::string::npos);
 }
 
 TEST(ConfirmationGate, ExpiredPendingIsSweptAndCannotBeConfirmed) {
-    ConfirmationGate gate = make_gate({"device.phone"});
+    ConfirmationGate gate = make_gate({"phone-1"});
     gate.with_pending_ttl(std::chrono::milliseconds(10));
 
     const std::string pending_id =
@@ -154,7 +154,7 @@ TEST(ConfirmationGate, ExpiredPendingIsSweptAndCannotBeConfirmed) {
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
     // The next route call sweeps the expired entry before looking up.
     const ActionResponse resp = run(gate, make_request(
-        "confirm_transfer", "a2", "device.phone",
+        "confirm_transfer", "a2", "phone-1",
         "{\"pending_id\": \"" + pending_id + "\"}"));
     EXPECT_EQ(resp.status(), ActionStatus::ACTION_ERROR);
     EXPECT_NE(resp.error().find("no pending transfer request"), std::string::npos);
@@ -162,7 +162,7 @@ TEST(ConfirmationGate, ExpiredPendingIsSweptAndCannotBeConfirmed) {
 }
 
 TEST(ConfirmationGate, UnknownActionsGetActionNotFound) {
-    const ConfirmationGate gate = make_gate({"device.phone"});
+    const ConfirmationGate gate = make_gate({"phone-1"});
 
     const ActionResponse other = run(gate, make_request("do_something_else", "a1", "ai", "{}"));
     EXPECT_EQ(other.status(), ActionStatus::ACTION_NOT_FOUND);
@@ -173,7 +173,7 @@ TEST(ConfirmationGate, UnknownActionsGetActionNotFound) {
 }
 
 TEST(ConfirmationGate, ManifestEntriesCarryConfirmationMetadata) {
-    const ConfirmationGate gate = make_gate({"device.phone"});
+    const ConfirmationGate gate = make_gate({"phone-1"});
     const auto [actions, specs] = gate.manifest_entries();
 
     ASSERT_EQ(actions.size(), 2u);
@@ -206,16 +206,18 @@ TEST(ConfirmationGate, InvalidOperationsAreRejectedAtConstruction) {
 }
 
 TEST(ConfirmationGate, ConfirmAllowlistMatchesExactAndGlob) {
-    const ConfirmationGate exact = make_gate({"device.phone", "host-ui"});
-    EXPECT_TRUE(exact.may_confirm("device.phone"));
+    const ConfirmationGate exact = make_gate({"phone-1", "host-ui"});
+    EXPECT_TRUE(exact.may_confirm("phone-1"));
     EXPECT_TRUE(exact.may_confirm("host-ui"));
-    EXPECT_FALSE(exact.may_confirm("device.geo"));
+    EXPECT_FALSE(exact.may_confirm("phone-1.geo"));
     EXPECT_FALSE(exact.may_confirm("ai"));
 
-    const ConfirmationGate glob = make_gate({"device.*"});
-    EXPECT_TRUE(glob.may_confirm("device.phone"));
-    EXPECT_TRUE(glob.may_confirm("device.geo"));
-    EXPECT_FALSE(glob.may_confirm("devices.phone"))
+    const ConfirmationGate glob = make_gate({"phone-1.*"});
+    EXPECT_TRUE(glob.may_confirm("phone-1.mic"));
+    EXPECT_TRUE(glob.may_confirm("phone-1.geo"));
+    EXPECT_FALSE(glob.may_confirm("phone-10.geo"))
         << "the glob keeps the dot";
+    EXPECT_FALSE(glob.may_confirm("phone-1"))
+        << "glob does not cover the bare id";
     EXPECT_FALSE(glob.may_confirm("ai"));
 }

@@ -74,8 +74,11 @@ public:
         const std::function<ActionResult(const std::vector<uint8_t>&)>& executor) const;
 
     // Whether caller_plugin_id is on the confirm allowlist: exact ids, or a
-    // `prefix.*` glob matching any caller whose id starts with `prefix.`
-    // (`device.*` matches `device.phone` but not `devices.phone`).
+    // `prefix.*` glob matching any caller whose id starts with `prefix.`.
+    // A paired device registers as `<device_id>` (single-WS, e.g. `phone-1`);
+    // legacy per-cap registrations are `<device_id>.<cap>`. `phone-1.*`
+    // matches `phone-1.geo` but neither `phone-10.geo` nor the bare `phone-1`
+    // — list both to cover either style.
     bool may_confirm(const std::string& caller_plugin_id) const;
 
     // Snapshot of the pending map size, for inspection/tests.
